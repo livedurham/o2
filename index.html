@@ -41,6 +41,13 @@
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useMemo, useCallback } = React;
 
+// =====================================================================
+// 直接填入 Supabase 設定（填完之後使用者就不會看到「初次設定」畫面）
+// 留空字串 '' 則改為使用者第一次打開時自己填
+// =====================================================================
+const EMBEDDED_SUPABASE_URL = 'https://oaxhxmgcjhtxlxlpnihg.supabase.co';
+const EMBEDDED_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9heGh4bWdjamh0eGx4bHBuaWhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA3NjIzODAsImV4cCI6MjA5NjMzODM4MH0.5jGTQgY4gZOcPx094DVAVAVZb_cZGTX3kzgsfyhI0mE';
+
 // ===== 病房選項（要增加病房，編輯這裡，也要記得改 SQL 的 ward check 限制） =====
 const WARDS = ['5A', 'RCC'];
 
@@ -196,7 +203,12 @@ function App() {
   const [booting, setBooting] = useState(true);
 
   useEffect(() => {
-    setCfg(store.get(CFG_KEY));
+    // 如果 HTML 裡有寫死 Supabase 設定，直接使用
+    if (EMBEDDED_SUPABASE_URL && EMBEDDED_SUPABASE_ANON_KEY) {
+      setCfg({ url: EMBEDDED_SUPABASE_URL, anonKey: EMBEDDED_SUPABASE_ANON_KEY });
+    } else {
+      setCfg(store.get(CFG_KEY));
+    }
     setSession(store.get(SES_KEY));
     setProfile(store.get(PRF_KEY));
     setBooting(false);
