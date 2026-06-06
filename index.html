@@ -9,6 +9,19 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=Fraunces:wght@600;700&display=swap">
+<script>
+  // 隱藏 Tailwind CDN 的開發提醒訊息（不影響功能或其他警告）
+  (function() {
+    const _warn = console.warn;
+    console.warn = function() {
+      if (arguments[0] && typeof arguments[0] === 'string' &&
+          arguments[0].indexOf('cdn.tailwindcss.com should not be used in production') !== -1) {
+        return;
+      }
+      _warn.apply(console, arguments);
+    };
+  })();
+</script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -76,6 +89,25 @@ class SB {
     });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
+  }
+  async update(table, query, patch, token) {
+    const r = await fetch(`${this.url}/rest/v1/${table}?${query}`, {
+      method: 'PATCH',
+      headers: { ...this._h(token), Prefer: 'return=representation' },
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  }
+  async updateOwnPassword(newPassword, token) {
+    const r = await fetch(`${this.url}/auth/v1/user`, {
+      method: 'PUT',
+      headers: { ...this._h(token) },
+      body: JSON.stringify({ password: newPassword }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.msg || d.error_description || d.message || '更新密碼失敗');
+    return d;
   }
   async upsert(table, row, token) {
     const r = await fetch(`${this.url}/rest/v1/${table}`, {
@@ -240,6 +272,11 @@ function App() {
     setSession(null); setProfile(null);
   };
 
+  const handleProfileUpdate = (newProfile) => {
+    store.set(PRF_KEY, newProfile);
+    setProfile(newProfile);
+  };
+
   const resetConfig = () => {
     if (!confirm('重設後需要重新填 Supabase 設定，確定？')) return;
     store.del(CFG_KEY); store.del(SES_KEY); store.del(PRF_KEY);
@@ -251,7 +288,7 @@ function App() {
   if (!session) return <LoginScreen sb={sb} onLogin={handleLogin} onResetConfig={resetConfig} />;
   if (!profile) return <ProfileScreen email={session.user?.email} onSave={handleProfileCreate} onSignOut={handleSignOut} />;
 
-  return <MainApp sb={sb} session={session} profile={profile} apiCall={apiCall} onSignOut={handleSignOut} />;
+  return <MainApp sb={sb} session={session} profile={profile} cfg={cfg} apiCall={apiCall} onSignOut={handleSignOut} onProfileUpdate={handleProfileUpdate} />;
 }
 
 // =====================================================================
@@ -328,6 +365,11 @@ function LoginScreen({ sb, onLogin, onResetConfig }) {
         </p>
         <button onClick={onResetConfig} className="w-full text-xs text-stone-400 py-2">重設 Supabase 連線</button>
       </div>
+
+      <div className="mt-12 pt-6 border-t border-stone-200 text-center">
+        <p className="text-xs text-stone-400">developer 林鎮均</p>
+        <p className="text-xs text-stone-400 mt-0.5">version 1.0 · 2026-06-07</p>
+      </div>
     </div>
   );
 }
@@ -350,13 +392,17 @@ function ProfileScreen({ email, onSave, onSignOut }) {
 }
 
 // =====================================================================
-function MainApp({ sb, session, profile, apiCall, onSignOut }) {
+function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdate }) {
   const [tab, setTab] = useState('entry');
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
 
   const showToast = (m) => { setToast(m); setTimeout(() => setToast(''), 1800); };
+
+  const confirmSignOut = () => {
+    if (confirm('確定要登出？')) onSignOut();
+  };
 
   const loadRecords = useCallback(async () => {
     setLoading(true);
@@ -415,6 +461,9 @@ function MainApp({ sb, session, profile, apiCall, onSignOut }) {
             <h1 className="text-xl font-bold tracking-tight serif">氧氣稽核</h1>
             <p className="text-[11px] text-stone-500 mt-0.5">
               {profile.name}{profile.is_admin ? ' · 管理員' : ''}
+              <button onClick={confirmSignOut} className="ml-2 text-stone-400 hover:text-rose-600 underline-offset-2 hover:underline">
+                登出
+              </button>
             </p>
           </div>
           <div className="text-right">
@@ -431,7 +480,7 @@ function MainApp({ sb, session, profile, apiCall, onSignOut }) {
           { k: 'entry', label: '新增' },
           { k: 'stats', label: '統計' },
           { k: 'list', label: '記錄' },
-          { k: 'me', label: '帳號' },
+          { k: 'settings', label: '設定' },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
             className={`flex-1 py-3 text-sm font-medium ${tab === t.k ? 'text-teal-700 border-b-2 border-teal-600' : 'text-stone-400'}`}>
@@ -444,7 +493,7 @@ function MainApp({ sb, session, profile, apiCall, onSignOut }) {
         {tab === 'entry' && <EntryForm onSave={addRecord} session={session} profile={profile} showToast={showToast} />}
         {tab === 'stats' && <StatsView loading={loading} weeklyStats={weeklyStats} thisWeek={thisWeek} overall={overall} records={records} />}
         {tab === 'list' && <ListView loading={loading} records={records} session={session} profile={profile} onDelete={delRecord} onRefresh={loadRecords} />}
-        {tab === 'me' && <MeView session={session} profile={profile} records={records} onSignOut={onSignOut} />}
+        {tab === 'settings' && <SettingsView session={session} profile={profile} records={records} cfg={cfg} sb={sb} apiCall={apiCall} onSignOut={confirmSignOut} onProfileUpdate={onProfileUpdate} />}
       </main>
 
       {toast && (
@@ -469,14 +518,13 @@ function EntryForm({ onSave, session, profile, showToast }) {
   const [saving, setSaving] = useState(false);
 
   const auto = useMemo(() => {
-    if (original === '' || adjusted === '' || spo2 === '') return null;
-    const o = parseFloat(original), a = parseFloat(adjusted), s = parseFloat(spo2);
-    if ([o, a, s].some(isNaN)) return null;
+    if (spo2 === '') return null;
+    const s = parseFloat(spo2);
+    if (isNaN(s)) return null;
     const upper = copd ? 92 : 98, lower = copd ? 88 : 94;
-    if (s > upper) return a < o;
-    if (s < lower) return a > o;
-    return true;
-  }, [original, adjusted, spo2, copd]);
+    // SpO2 在目標範圍內 = 符合；超出範圍（過高或過低）= 不符合
+    return s >= lower && s <= upper;
+  }, [spo2, copd]);
 
   const compliant = manualOk !== null ? manualOk : auto;
   const unit = mode === 'flow' ? 'L/min' : '%';
@@ -565,7 +613,7 @@ function EntryForm({ onSave, session, profile, showToast }) {
 
       <div className="bg-white rounded-xl border border-stone-200 p-4">
         <div className="flex items-center justify-between mb-2">
-          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">SpO₂（選填，可自動判定）</label>
+          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">調整前的 SpO₂</label>
           <label className="flex items-center gap-1.5 text-xs text-stone-600">
             <input type="checkbox" checked={copd} onChange={e => setCopd(e.target.checked)} className="accent-teal-600" />
             COPD
@@ -761,22 +809,15 @@ function ListView({ loading, records, session, profile, onDelete, onRefresh }) {
 }
 
 // =====================================================================
-function MeView({ session, profile, records, onSignOut }) {
-  const [exportWard, setExportWard] = useState('all');
-
-  const doExport = () => {
-    const rows = exportWard === 'all' ? records : records.filter(r => r.ward === exportWard);
-    if (rows.length === 0) { alert('沒有可匯出的資料'); return; }
-    const today = new Date().toISOString().slice(0, 10);
-    const tag = exportWard === 'all' ? '全部' : exportWard;
-    downloadCSV(rows, `氧氣稽核_${today}_${tag}.csv`);
-  };
-
+function SettingsView({ session, profile, records, cfg, sb, apiCall, onSignOut, onProfileUpdate }) {
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-xl border border-stone-200 p-4">
         <div className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">帳號</div>
-        <div className="mt-1 text-lg font-semibold">{profile.name}{profile.is_admin && <span className="ml-2 text-xs bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full">管理員</span>}</div>
+        <div className="mt-1 text-lg font-semibold">
+          {profile.name}
+          {profile.is_admin && <span className="ml-2 text-xs bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full">管理員</span>}
+        </div>
         <div className="text-sm text-stone-500">{session.user.email}</div>
       </div>
 
@@ -786,26 +827,242 @@ function MeView({ session, profile, records, onSignOut }) {
         <div className="text-xs text-stone-500">筆稽核記錄</div>
       </div>
 
-      <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
-        <div className="text-sm font-semibold text-stone-700">匯出 CSV</div>
-        <div>
-          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">範圍</label>
-          <select value={exportWard} onChange={e => setExportWard(e.target.value)}
-            className="mt-1 w-full bg-white border border-stone-300 rounded-lg px-3 py-2.5 text-sm">
-            <option value="all">全部病房</option>
-            {WARDS.map(w => <option key={w} value={w}>僅 {w}</option>)}
-          </select>
-        </div>
-        <button onClick={doExport}
-          className="w-full py-3 rounded-xl bg-teal-700 text-white font-semibold active:bg-teal-800">
-          下載 CSV
-        </button>
-        <p className="text-xs text-stone-400">CSV 內含 UTF-8 BOM，Excel 可直接開啟。</p>
-      </div>
+      <ChangeNameCard profile={profile} sb={sb} apiCall={apiCall} onSuccess={onProfileUpdate} />
+      <ChangePasswordCard sb={sb} session={session} />
 
-      <button onClick={onSignOut} className="w-full py-3 rounded-xl border border-stone-300 bg-white text-stone-700 font-semibold">
+      {profile.is_admin && (
+        <UserManagementCard session={session} sb={sb} apiCall={apiCall} cfg={cfg} />
+      )}
+
+      <ExportCard records={records} />
+
+      <button onClick={onSignOut}
+        className="w-full py-3 rounded-xl border border-rose-200 bg-white text-rose-700 font-semibold active:bg-rose-50">
         登出
       </button>
+    </div>
+  );
+}
+
+// =====================================================================
+function ChangeNameCard({ profile, sb, apiCall, onSuccess }) {
+  const [name, setName] = useState(profile.name);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  const submit = async () => {
+    setMsg(''); setErr('');
+    if (!name.trim()) { setErr('名稱不能空白'); return; }
+    if (name.trim() === profile.name) return;
+    setBusy(true);
+    try {
+      const updated = await apiCall(t => sb.update('profiles', `id=eq.${profile.id}`, { name: name.trim() }, t));
+      if (updated[0]) onSuccess(updated[0]);
+      setMsg('已更新');
+      setTimeout(() => setMsg(''), 2000);
+    } catch (e) {
+      setErr('更新失敗：' + e.message);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
+      <div className="text-sm font-semibold text-stone-700">變更顯示名稱</div>
+      <input value={name} onChange={e => setName(e.target.value)}
+        className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-teal-600" />
+      {err && <div className="text-rose-600 text-sm">{err}</div>}
+      {msg && <div className="text-emerald-700 text-sm">{msg}</div>}
+      <button onClick={submit} disabled={busy || name.trim() === profile.name || !name.trim()}
+        className="w-full py-2.5 rounded-lg bg-stone-900 text-white text-sm font-semibold active:bg-stone-700 disabled:opacity-40">
+        {busy ? '更新中…' : '更新名稱'}
+      </button>
+    </div>
+  );
+}
+
+// =====================================================================
+function ChangePasswordCard({ sb, session }) {
+  const [pwd1, setPwd1] = useState('');
+  const [pwd2, setPwd2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  const submit = async () => {
+    setMsg(''); setErr('');
+    if (pwd1.length < 6) { setErr('密碼至少 6 字元'); return; }
+    if (pwd1 !== pwd2) { setErr('兩次密碼不一致'); return; }
+    setBusy(true);
+    try {
+      await sb.updateOwnPassword(pwd1, session.access_token);
+      setMsg('密碼已更新');
+      setPwd1(''); setPwd2('');
+      setTimeout(() => setMsg(''), 2500);
+    } catch (e) {
+      setErr(e.message);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
+      <div className="text-sm font-semibold text-stone-700">變更密碼</div>
+      <input type="password" value={pwd1} onChange={e => setPwd1(e.target.value)}
+        placeholder="新密碼（至少 6 字元）" autoComplete="new-password"
+        className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-teal-600" />
+      <input type="password" value={pwd2} onChange={e => setPwd2(e.target.value)}
+        placeholder="再次輸入新密碼" autoComplete="new-password"
+        className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-teal-600" />
+      {err && <div className="text-rose-600 text-sm">{err}</div>}
+      {msg && <div className="text-emerald-700 text-sm">{msg}</div>}
+      <button onClick={submit} disabled={busy}
+        className="w-full py-2.5 rounded-lg bg-stone-900 text-white text-sm font-semibold active:bg-stone-700 disabled:opacity-50">
+        {busy ? '更新中…' : '更新密碼'}
+      </button>
+    </div>
+  );
+}
+
+// =====================================================================
+function UserManagementCard({ session, sb, apiCall, cfg }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null);
+  const [editName, setEditName] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiCall(t => sb.select('profiles', 'select=*&order=created_at.asc', t));
+      setUsers(data);
+    } catch (e) {
+      alert('讀取失敗：' + e.message);
+    } finally { setLoading(false); }
+  }, [apiCall, sb]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const startEdit = (u) => { setEditing(u.id); setEditName(u.name); };
+
+  const saveEdit = async () => {
+    if (!editName.trim()) { alert('名稱不能空白'); return; }
+    try {
+      await apiCall(t => sb.update('profiles', `id=eq.${editing}`, { name: editName.trim() }, t));
+      setUsers(prev => prev.map(x => x.id === editing ? { ...x, name: editName.trim() } : x));
+      setEditing(null);
+    } catch (e) {
+      alert('儲存失敗：' + e.message);
+    }
+  };
+
+  const toggleAdmin = async (u) => {
+    const newVal = !u.is_admin;
+    if (u.id === session.user.id && !newVal) {
+      const others = users.filter(x => x.id !== u.id && x.is_admin);
+      if (others.length === 0) {
+        alert('不能取消最後一位管理員的權限，請先指派其他管理員');
+        return;
+      }
+      if (!confirm('要取消自己的管理員權限嗎？取消後將失去管理功能。')) return;
+    } else {
+      const action = newVal ? '設為' : '取消';
+      if (!confirm(`要${action}「${u.name}」的管理員權限嗎？`)) return;
+    }
+    try {
+      await apiCall(t => sb.update('profiles', `id=eq.${u.id}`, { is_admin: newVal }, t));
+      setUsers(prev => prev.map(x => x.id === u.id ? { ...x, is_admin: newVal } : x));
+    } catch (e) {
+      alert('變更失敗：' + e.message);
+    }
+  };
+
+  // 解析 Supabase Dashboard 網址（從 project URL）
+  const projectId = (cfg.url.match(/https:\/\/([^.]+)\./) || [])[1];
+  const dashUrl = projectId ? `https://supabase.com/dashboard/project/${projectId}/auth/users` : null;
+
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold text-stone-700">使用者管理</div>
+        <button onClick={load} className="text-xs text-stone-500">重新整理</button>
+      </div>
+
+      {loading ? <div className="text-stone-400 text-sm text-center py-4">載入中…</div>
+        : (
+          <div className="space-y-2">
+            {users.map(u => (
+              <div key={u.id} className="border border-stone-200 rounded-lg p-3">
+                {editing === u.id ? (
+                  <div className="space-y-2">
+                    <input value={editName} onChange={e => setEditName(e.target.value)} autoFocus
+                      className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-teal-600" />
+                    <div className="flex gap-2">
+                      <button onClick={saveEdit} className="flex-1 py-1.5 rounded bg-teal-700 text-white text-xs font-semibold">儲存</button>
+                      <button onClick={() => setEditing(null)} className="flex-1 py-1.5 rounded border border-stone-300 text-stone-600 text-xs">取消</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold">{u.name}</span>
+                        {u.is_admin && <span className="text-[10px] bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded-full">管理員</span>}
+                        {u.id === session.user.id && <span className="text-[10px] text-stone-400">（你）</span>}
+                      </div>
+                      <button onClick={() => startEdit(u)} className="text-xs text-stone-500 hover:text-stone-900">編輯</button>
+                    </div>
+                    <div className="mt-2 flex gap-2">
+                      <button onClick={() => toggleAdmin(u)}
+                        className={`text-xs px-2.5 py-1 rounded border ${u.is_admin ? 'border-rose-200 text-rose-700 hover:bg-rose-50' : 'border-teal-300 text-teal-700 hover:bg-teal-50'}`}>
+                        {u.is_admin ? '取消管理員' : '設為管理員'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+      <div className="pt-3 border-t border-stone-100 space-y-2">
+        <div className="text-xs font-semibold text-stone-600">新增 / 刪除帳號 / 重設他人密碼</div>
+        <p className="text-xs text-stone-500 leading-relaxed">
+          這些操作需在 Supabase 後台執行（Authentication → Users）。新增使用者時務必勾選 <span className="font-mono bg-stone-100 px-1">Auto Confirm User</span>。
+        </p>
+        {dashUrl && (
+          <a href={dashUrl} target="_blank" rel="noopener noreferrer"
+            className="block text-center w-full py-2 rounded-lg bg-stone-100 text-stone-700 text-xs font-semibold hover:bg-stone-200">
+            開啟 Supabase 使用者管理 ↗
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
+function ExportCard({ records }) {
+  const [exportWard, setExportWard] = useState('all');
+  const doExport = () => {
+    const rows = exportWard === 'all' ? records : records.filter(r => r.ward === exportWard);
+    if (rows.length === 0) { alert('沒有可匯出的資料'); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    const tag = exportWard === 'all' ? '全部' : exportWard;
+    downloadCSV(rows, `氧氣稽核_${today}_${tag}.csv`);
+  };
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
+      <div className="text-sm font-semibold text-stone-700">匯出 CSV</div>
+      <select value={exportWard} onChange={e => setExportWard(e.target.value)}
+        className="w-full bg-white border border-stone-300 rounded-lg px-3 py-2.5 text-sm">
+        <option value="all">全部病房</option>
+        {WARDS.map(w => <option key={w} value={w}>僅 {w}</option>)}
+      </select>
+      <button onClick={doExport}
+        className="w-full py-3 rounded-xl bg-teal-700 text-white font-semibold active:bg-teal-800">
+        下載 CSV
+      </button>
+      <p className="text-xs text-stone-400">CSV 內含 UTF-8 BOM，Excel 可直接開啟。</p>
     </div>
   );
 }
