@@ -540,7 +540,7 @@ function EntryForm({ onSave, session, profile, showToast }) {
     if (spo2 === '') return null;
     const s = parseFloat(spo2);
     if (isNaN(s)) return null;
-    const upper = copd ? 92 : 98, lower = copd ? 88 : 94;
+    const upper = copd ? 92 : 96, lower = copd ? 88 : 92;
     // SpO2 在目標範圍內 = 符合；超出範圍（過高或過低）= 不符合
     return s >= lower && s <= upper;
   }, [spo2, copd]);
@@ -640,7 +640,7 @@ function EntryForm({ onSave, session, profile, showToast }) {
         </div>
         <div className="relative">
           <input type="number" inputMode="decimal" value={spo2} onChange={e => setSpo2(e.target.value)}
-            placeholder={copd ? '目標 88–92' : '目標 94–98'}
+            placeholder={copd ? '目標 88–92' : '目標 92–96'}
             className="w-full text-xl font-semibold tabular-nums bg-stone-50 border border-stone-200 rounded-lg px-3 py-2.5 pr-8 outline-none focus:border-teal-600" />
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-stone-400">%</span>
         </div>
