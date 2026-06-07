@@ -261,13 +261,13 @@ function App() {
 
   const handleLogin = async (sessionData) => {
     store.set(SES_KEY, sessionData);
-    setSession(sessionData);
-    // 嘗試載入 profile
+    // 先載入 profile（若已存在）再設定 session，避免閃過「顯示名稱」畫面
     try {
       await loadOrCreateProfile(sessionData);
     } catch (e) {
       console.error('Load profile failed', e);
     }
+    setSession(sessionData);
   };
 
   const handleProfileCreate = async (name) => {
@@ -468,21 +468,28 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
   return (
     <div className="min-h-screen">
       <header className="px-5 pt-6 pb-4 bg-white border-b border-stone-200">
-        <div className="flex items-baseline justify-between">
+        <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold tracking-tight serif">氧氣稽核</h1>
             <p className="text-[11px] text-stone-500 mt-0.5">
               {profile.name}{profile.is_admin ? ' · 管理員' : ''}
-              <button onClick={confirmSignOut} className="ml-2 text-stone-400 hover:text-rose-600 underline-offset-2 hover:underline">
-                登出
-              </button>
             </p>
           </div>
-          <div className="text-right">
-            <div className="text-3xl font-bold tabular-nums text-teal-700 serif">
-              {thisWeek.rate}<span className="text-base text-stone-400">%</span>
+          <div className="flex items-center gap-2">
+            <div className="text-right">
+              <div className="text-3xl font-bold tabular-nums text-teal-700 serif">
+                {thisWeek.rate}<span className="text-base text-stone-400">%</span>
+              </div>
+              <div className="text-[10px] text-stone-500 uppercase tracking-wider">本週符合率</div>
             </div>
-            <div className="text-[10px] text-stone-500 uppercase tracking-wider">本週符合率</div>
+            <button onClick={onSignOut} title="登出" aria-label="登出"
+              className="p-2 rounded-lg text-stone-400 hover:text-rose-600 active:bg-stone-100">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                <polyline points="16 17 21 12 16 7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+            </button>
           </div>
         </div>
       </header>
