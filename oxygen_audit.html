@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>氧氣稽核</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=Fraunces:wght@600;700&display=swap">
+<script>
+  // 隱藏 Tailwind CDN 的開發提醒訊息（不影響功能或其他警告）
+  (function() {
+    const _warn = console.warn;
+    console.warn = function() {
+      if (arguments[0] && typeof arguments[0] === 'string' &&
+          arguments[0].indexOf('cdn.tailwindcss.com should not be used in production') !== -1) {
+        return;
+      }
+      _warn.apply(console, arguments);
+    };
+  })();
+</script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  body { font-family: "Noto Sans TC", -apple-system, BlinkMacSystemFont, sans-serif; -webkit-tap-highlight-color: transparent; }
+  .serif { font-family: Fraunces, serif; }
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+  select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2378716c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e"); background-repeat: no-repeat; background-position: right 0.75rem center; background-size: 1rem; padding-right: 2.25rem; }
+</style>
+</head>
+<body class="bg-stone-50 text-stone-900">
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useCallback } = React;
+
+// =====================================================================
+// 直接填入 Supabase 設定（填完之後使用者就不會看到「初次設定」畫面）
+// 留空字串 '' 則改為使用者第一次打開時自己填
+// =====================================================================
+const EMBEDDED_SUPABASE_URL = 'https://oaxhxmgcjhtxlxlpnihg.supabase.co';
+const EMBEDDED_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9heGh4bWdjamh0eGx4bHBuaWhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA3NjIzODAsImV4cCI6MjA5NjMzODM4MH0.5jGTQgY4gZOcPx094DVAVAVZb_cZGTX3kzgsfyhI0mE';
+
+// ===== 病房選項（要增加病房，編輯這裡，也要記得改 SQL 的 ward check 限制） =====
+const WARDS = ['5A', 'RCC'];
+
+// ===== Storage keys =====
+const CFG_KEY = 'oxy-audit-cfg';
+const SES_KEY = 'oxy-audit-ses';
+const PRF_KEY = 'oxy-audit-prf';
+
+// ===== Supabase REST client =====
+class SB {
+  constructor(url, anonKey) {
+    this.url = url.replace(/\/$/, '');
+    this.anonKey = anonKey;
+  }
+  _h(token) {
+    return {
+      apikey: this.anonKey,
+      Authorization: `Bearer ${token || this.anonKey}`,
+      'Content-Type': 'application/json',
+    };
+  }
+  async signIn(email, password) {
+    const r = await fetch(`${this.url}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: { apikey: this.anonKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error_description || d.msg || d.message || '登入失敗');
+    return d;
+  }
+  async refresh(refresh_token) {
+    const r = await fetch(`${this.url}/auth/v1/token?grant_type=refresh_token`, {
+      method: 'POST',
+      headers: { apikey: this.anonKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token }),
+    });
+    if (!r.ok) throw new Error('SESSION_EXPIRED');
+    return r.json();
+  }
+  async insert(table, row, token) {
+    const r = await fetch(`${this.url}/rest/v1/${table}`, {
+      method: 'POST',
+      headers: { ...this._h(token), Prefer: 'return=representation' },
+      body: JSON.stringify(row),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  }
+  async update(table, query, patch, token) {
+    const r = await fetch(`${this.url}/rest/v1/${table}?${query}`, {
+      method: 'PATCH',
+      headers: { ...this._h(token), Prefer: 'return=representation' },
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  }
+  async updateOwnPassword(newPassword, token) {
+    const r = await fetch(`${this.url}/auth/v1/user`, {
+      method: 'PUT',
+      headers: { ...this._h(token) },
+      body: JSON.stringify({ password: newPassword }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.msg || d.error_description || d.message || '更新密碼失敗');
+    return d;
+  }
+  async upsert(table, row, token) {
+    const r = await fetch(`${this.url}/rest/v1/${table}`, {
+      method: 'POST',
+      headers: { ...this._h(token), Prefer: 'return=representation,resolution=merge-duplicates' },
+      body: JSON.stringify(row),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  }
+  async select(table, query, token) {
+    const r = await fetch(`${this.url}/rest/v1/${table}?${query}`, {
+      headers: this._h(token),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  }
+  async remove(table, id, token) {
+    const r = await fetch(`${this.url}/rest/v1/${table}?id=eq.${id}`, {
+      method: 'DELETE',
+      headers: this._h(token),
+    });
+    if (!r.ok) throw new Error(await r.text());
+  }
+}
+
+// ===== local storage =====
+const store = {
+  get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.error(e); } },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+
+// ===== utils =====
+const getISOWeek = (date) => {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const w = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(w).padStart(2, '0')}`;
+};
+
+const downloadCSV = (rows, filename) => {
+  const headers = ['時間', '稽核者', '病房', '床號', '模式', '原值', '調整後', 'SpO2', 'COPD', '符合標準'];
+  const escape = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+  const lines = [headers.join(',')];
+  rows.forEach(r => {
+    lines.push([
+      new Date(r.created_at).toLocaleString('zh-TW', { hour12: false }),
+      r.auditor_name,
+      r.ward,
+      r.bed_number,
+      r.mode === 'flow' ? '流量(L/min)' : 'FiO2(%)',
+      r.original_value,
+      r.adjusted_value,
+      r.spo2 == null ? '' : r.spo2,
+      r.copd ? '是' : '否',
+      r.compliant ? '符合' : '不符合',
+    ].map(escape).join(','));
+  });
+  const bom = '\uFEFF';
+  const blob = new Blob([bom + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+// =====================================================================
+function App() {
+  const [cfg, setCfg] = useState(null);
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [booting, setBooting] = useState(true);
+
+  useEffect(() => {
+    // 如果 HTML 裡有寫死 Supabase 設定，直接使用
+    if (EMBEDDED_SUPABASE_URL && EMBEDDED_SUPABASE_ANON_KEY) {
+      setCfg({ url: EMBEDDED_SUPABASE_URL, anonKey: EMBEDDED_SUPABASE_ANON_KEY });
+    } else {
+      setCfg(store.get(CFG_KEY));
+    }
+    setSession(store.get(SES_KEY));
+    setProfile(store.get(PRF_KEY));
+    setBooting(false);
+  }, []);
+
+  const sb = useMemo(() => (cfg ? new SB(cfg.url, cfg.anonKey) : null), [cfg]);
+
+  const apiCall = useCallback(async (fn) => {
+    if (!session) throw new Error('未登入');
+    try {
+      return await fn(session.access_token);
+    } catch (e) {
+      const msg = String(e.message);
+      if (msg.match(/JWT|expired|401|invalid/i)) {
+        try {
+          const ns = await sb.refresh(session.refresh_token);
+          const merged = { ...session, ...ns };
+          setSession(merged);
+          store.set(SES_KEY, merged);
+          return await fn(merged.access_token);
+        } catch {
+          store.del(SES_KEY); setSession(null);
+          throw new Error('連線階段已過期，請重新登入');
+        }
+      }
+      throw e;
+    }
+  }, [session, sb]);
+
+  // 載入或建立 profile
+  const loadOrCreateProfile = useCallback(async (sessionData, displayName) => {
+    const token = sessionData.access_token;
+    const uid = sessionData.user.id;
+    // 先試著讀 profile
+    const found = await sb.select('profiles', `id=eq.${uid}&select=*`, token);
+    if (found.length > 0) {
+      const p = found[0];
+      store.set(PRF_KEY, p);
+      setProfile(p);
+      return p;
+    }
+    if (!displayName) return null;
+    // 建立
+    const created = await sb.insert('profiles', { id: uid, name: displayName, is_admin: false }, token);
+    const p = created[0];
+    store.set(PRF_KEY, p);
+    setProfile(p);
+    return p;
+  }, [sb]);
+
+  const handleLogin = async (sessionData) => {
+    store.set(SES_KEY, sessionData);
+    // 先載入 profile（若已存在）再設定 session，避免閃過「顯示名稱」畫面
+    try {
+      await loadOrCreateProfile(sessionData);
+    } catch (e) {
+      console.error('Load profile failed', e);
+    }
+    setSession(sessionData);
+  };
+
+  const handleProfileCreate = async (name) => {
+    if (!session) return;
+    try {
+      await loadOrCreateProfile(session, name);
+    } catch (e) {
+      alert('建立 profile 失敗：' + e.message);
+    }
+  };
+
+  const handleSignOut = () => {
+    store.del(SES_KEY); store.del(PRF_KEY);
+    setSession(null); setProfile(null);
+  };
+
+  const handleProfileUpdate = (newProfile) => {
+    store.set(PRF_KEY, newProfile);
+    setProfile(newProfile);
+  };
+
+  const resetConfig = () => {
+    if (!confirm('重設後需要重新填 Supabase 設定，確定？')) return;
+    store.del(CFG_KEY); store.del(SES_KEY); store.del(PRF_KEY);
+    setCfg(null); setSession(null); setProfile(null);
+  };
+
+  if (booting) return <div className="text-center text-stone-400 py-20">載入中…</div>;
+  if (!cfg) return <ConfigScreen onSave={(c) => { store.set(CFG_KEY, c); setCfg(c); }} />;
+  if (!session) return <LoginScreen sb={sb} onLogin={handleLogin} onResetConfig={resetConfig} />;
+  if (!profile) return <ProfileScreen email={session.user?.email} onSave={handleProfileCreate} onSignOut={handleSignOut} />;
+
+  return <MainApp sb={sb} session={session} profile={profile} cfg={cfg} apiCall={apiCall} onSignOut={handleSignOut} onProfileUpdate={handleProfileUpdate} />;
+}
+
+// =====================================================================
+function ConfigScreen({ onSave }) {
+  const [url, setUrl] = useState('');
+  const [key, setKey] = useState('');
+  const [err, setErr] = useState('');
+
+  const submit = () => {
+    if (!url.trim() || !key.trim()) { setErr('兩個欄位都要填'); return; }
+    if (!url.startsWith('https://')) { setErr('URL 必須是 https://'); return; }
+    onSave({ url: url.trim(), anonKey: key.trim() });
+  };
+
+  return (
+    <div className="px-5 pt-12 pb-10 max-w-md mx-auto">
+      <h1 className="text-2xl font-bold serif">初次設定</h1>
+      <p className="text-sm text-stone-500 mt-1">貼上 Supabase 專案資訊（只需設定一次）</p>
+      <div className="mt-8 space-y-4">
+        <div>
+          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">Project URL</label>
+          <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://xxxx.supabase.co"
+            className="mt-1 w-full bg-white border border-stone-300 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-teal-600" />
+        </div>
+        <div>
+          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">anon public key</label>
+          <textarea value={key} onChange={e => setKey(e.target.value)} placeholder="eyJhbGciOi..." rows={3}
+            className="mt-1 w-full bg-white border border-stone-300 rounded-lg px-3 py-2.5 text-xs font-mono outline-none focus:border-teal-600" />
+        </div>
+        {err && <div className="text-rose-600 text-sm">{err}</div>}
+        <button onClick={submit} className="w-full py-3.5 rounded-xl bg-stone-900 text-white font-semibold active:bg-stone-700">儲存設定</button>
+        <p className="text-xs text-stone-400 leading-relaxed">
+          兩個值在 Supabase 後台 Settings → API 找得到。anon key 可公開，資料安全靠 Row Level Security。
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
+function LoginScreen({ sb, onLogin, onResetConfig }) {
+  const [email, setEmail] = useState('');
+  const [pwd, setPwd] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const submit = async () => {
+    setErr(''); setBusy(true);
+    try {
+      const data = await sb.signIn(email.trim(), pwd);
+      onLogin(data);
+    } catch (e) {
+      setErr(e.message);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="px-5 pt-12 pb-10 max-w-md mx-auto">
+      <h1 className="text-2xl font-bold serif">登入</h1>
+      <p className="text-sm text-stone-500 mt-1">氧氣稽核稽核員專用</p>
+      <div className="mt-8 space-y-3">
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email" autoComplete="email"
+          className="w-full bg-white border border-stone-300 rounded-lg px-3 py-3 text-base outline-none focus:border-teal-600" />
+        <input type="password" value={pwd} onChange={e => setPwd(e.target.value)} placeholder="密碼" autoComplete="current-password"
+          onKeyDown={e => e.key === 'Enter' && submit()}
+          className="w-full bg-white border border-stone-300 rounded-lg px-3 py-3 text-base outline-none focus:border-teal-600" />
+        {err && <div className="text-rose-600 text-sm">{err}</div>}
+        <button onClick={submit} disabled={busy}
+          className="w-full py-3.5 rounded-xl bg-stone-900 text-white font-semibold active:bg-stone-700 disabled:opacity-50">
+          {busy ? '登入中…' : '登入'}
+        </button>
+        <p className="text-xs text-stone-400 leading-relaxed pt-2">
+          沒有帳號？請聯絡管理員建立。
+        </p>
+      </div>
+
+      <div className="mt-12 pt-6 border-t border-stone-200 text-center">
+        <p className="text-xs text-stone-400">developer 林鎮均</p>
+        <p className="text-xs text-stone-400 mt-0.5">version 1.0 · 2026-06-07</p>
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
+function ProfileScreen({ email, onSave, onSignOut }) {
+  const [name, setName] = useState('');
+  return (
+    <div className="px-5 pt-12 pb-10 max-w-md mx-auto">
+      <h1 className="text-2xl font-bold serif">顯示名稱</h1>
+      <p className="text-sm text-stone-500 mt-1">{email}</p>
+      <p className="text-sm text-stone-500 mt-3">輸入你的名字，會顯示在稽核記錄上</p>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="例如 王護理師"
+        className="mt-6 w-full bg-white border border-stone-300 rounded-lg px-3 py-3 text-lg outline-none focus:border-teal-600" />
+      <button onClick={() => name.trim() && onSave(name.trim())}
+        className="mt-4 w-full py-3.5 rounded-xl bg-stone-900 text-white font-semibold active:bg-stone-700">繼續</button>
+      <button onClick={onSignOut} className="mt-2 w-full py-2 text-sm text-stone-400">登出</button>
+    </div>
+  );
+}
+
+// =====================================================================
+function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdate }) {
+  const [tab, setTab] = useState('entry');
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState('');
+
+  const showToast = (m) => { setToast(m); setTimeout(() => setToast(''), 1800); };
+
+  const confirmSignOut = () => {
+    if (confirm('確定要登出？')) onSignOut();
+  };
+
+  const loadRecords = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiCall(t => sb.select('oxygen_audits', 'select=*&order=created_at.desc&limit=2000', t));
+      setRecords(data);
+    } catch (e) {
+      showToast('讀取失敗：' + e.message);
+    } finally { setLoading(false); }
+  }, [apiCall, sb]);
+
+  useEffect(() => { loadRecords(); }, [loadRecords]);
+
+  const addRecord = async (payload) => {
+    const inserted = await apiCall(t => sb.insert('oxygen_audits', payload, t));
+    setRecords(prev => [inserted[0], ...prev]);
+    showToast('已儲存 ✓');
+  };
+
+  const delRecord = async (id) => {
+    if (!confirm('刪除這筆記錄？')) return;
+    try {
+      await apiCall(t => sb.remove('oxygen_audits', id, t));
+      setRecords(prev => prev.filter(r => r.id !== id));
+      showToast('已刪除');
+    } catch (e) {
+      showToast('刪除失敗：' + e.message);
+    }
+  };
+
+  const thisWeekKey = getISOWeek(new Date());
+  const weeklyStats = useMemo(() => {
+    const map = {};
+    records.forEach(r => {
+      const k = getISOWeek(new Date(r.created_at));
+      if (!map[k]) map[k] = { week: k, total: 0, ok: 0 };
+      map[k].total++;
+      if (r.compliant) map[k].ok++;
+    });
+    return Object.values(map).sort((a, b) => a.week.localeCompare(b.week))
+      .map(w => ({ ...w, rate: w.total ? Math.round((w.ok / w.total) * 100) : 0 }));
+  }, [records]);
+
+  const thisWeek = weeklyStats.find(w => w.week === thisWeekKey) || { rate: 0, total: 0, ok: 0 };
+  const overall = useMemo(() => {
+    if (!records.length) return { total: 0, ok: 0, rate: 0 };
+    const ok = records.filter(r => r.compliant).length;
+    return { total: records.length, ok, rate: Math.round((ok / records.length) * 100) };
+  }, [records]);
+
+  return (
+    <div className="min-h-screen">
+      <header className="px-5 pt-6 pb-4 bg-white border-b border-stone-200">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight serif">氧氣稽核</h1>
+            <p className="text-[11px] text-stone-500 mt-0.5">
+              {profile.name}{profile.is_admin ? ' · 管理員' : ''}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="text-right">
+              <div className="text-3xl font-bold tabular-nums text-teal-700 serif">
+                {thisWeek.rate}<span className="text-base text-stone-400">%</span>
+              </div>
+              <div className="text-[10px] text-stone-500 uppercase tracking-wider">本週符合率</div>
+            </div>
+            <button onClick={onSignOut} title="登出" aria-label="登出"
+              className="p-2 rounded-lg text-stone-400 hover:text-rose-600 active:bg-stone-100">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                <polyline points="16 17 21 12 16 7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <nav className="flex border-b border-stone-200 bg-white sticky top-0 z-10">
+        {[
+          { k: 'entry', label: '新增' },
+          { k: 'stats', label: '統計' },
+          { k: 'list', label: '記錄' },
+          { k: 'settings', label: '設定' },
+        ].map(t => (
+          <button key={t.k} onClick={() => setTab(t.k)}
+            className={`flex-1 py-3 text-sm font-medium ${tab === t.k ? 'text-teal-700 border-b-2 border-teal-600' : 'text-stone-400'}`}>
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      <main className="px-5 py-5 pb-24 max-w-md mx-auto">
+        {tab === 'entry' && <EntryForm onSave={addRecord} session={session} profile={profile} showToast={showToast} />}
+        {tab === 'stats' && <StatsView loading={loading} weeklyStats={weeklyStats} thisWeek={thisWeek} overall={overall} records={records} />}
+        {tab === 'list' && <ListView loading={loading} records={records} session={session} profile={profile} onDelete={delRecord} onRefresh={loadRecords} />}
+        {tab === 'settings' && <SettingsView session={session} profile={profile} records={records} cfg={cfg} sb={sb} apiCall={apiCall} onSignOut={confirmSignOut} onProfileUpdate={onProfileUpdate} />}
+      </main>
+
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-stone-900 text-white text-sm px-5 py-2.5 rounded-full shadow-lg z-50">
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+function EntryForm({ onSave, session, profile, showToast }) {
+  const [ward, setWard] = useState(WARDS[0]);
+  const [bed, setBed] = useState('');
+  const [mode, setMode] = useState('flow');
+  const [original, setOriginal] = useState('');
+  const [adjusted, setAdjusted] = useState('');
+  const [spo2, setSpo2] = useState('');
+  const [copd, setCopd] = useState(false);
+  const [manualOk, setManualOk] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const auto = useMemo(() => {
+    if (spo2 === '') return null;
+    const s = parseFloat(spo2);
+    if (isNaN(s)) return null;
+    const upper = copd ? 92 : 96, lower = copd ? 88 : 92;
+    // SpO2 在目標範圍內 = 符合；超出範圍（過高或過低）= 不符合
+    return s >= lower && s <= upper;
+  }, [spo2, copd]);
+
+  const compliant = manualOk !== null ? manualOk : auto;
+  const unit = mode === 'flow' ? 'L/min' : '%';
+
+  const reset = () => {
+    setBed(''); setOriginal(''); setAdjusted(''); setSpo2('');
+    setManualOk(null); setCopd(false);
+  };
+
+  const submit = async () => {
+    if (!bed.trim()) { showToast('請輸入床號'); return; }
+    if (bed.trim().length > 6) { showToast('床號最多 6 字元'); return; }
+    if (original === '' || adjusted === '') { showToast('請輸入原值與調整後'); return; }
+    if (compliant === null) { showToast('請判定是否符合標準'); return; }
+    setSaving(true);
+    try {
+      await onSave({
+        auditor_id: session.user.id,
+        auditor_name: profile.name,
+        ward,
+        bed_number: bed.trim(),
+        mode,
+        original_value: parseFloat(original),
+        adjusted_value: parseFloat(adjusted),
+        spo2: spo2 === '' ? null : parseFloat(spo2),
+        copd,
+        compliant: compliant === true,
+      });
+      reset();
+    } catch (e) {
+      showToast('儲存失敗：' + e.message);
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">病房 <span className="text-rose-500">*</span></label>
+          <select value={ward} onChange={e => setWard(e.target.value)}
+            className="mt-1 w-full text-lg font-semibold bg-white border border-stone-300 rounded-lg px-3 py-3 outline-none focus:border-teal-600">
+            {WARDS.map(w => <option key={w} value={w}>{w}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">床號 <span className="text-rose-500">*</span></label>
+          <input value={bed} onChange={e => setBed(e.target.value.slice(0, 6))} maxLength={6} inputMode="numeric"
+            placeholder="0000"
+            className="mt-1 w-full text-lg font-semibold bg-white border border-stone-300 rounded-lg px-3 py-3 outline-none focus:border-teal-600" />
+        </div>
+      </div>
+
+      <div>
+        <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">給氧模式</label>
+        <div className="mt-1 grid grid-cols-2 gap-2">
+          <button onClick={() => setMode('flow')}
+            className={`py-3 rounded-lg border-2 text-sm font-semibold ${mode === 'flow' ? 'border-teal-600 bg-teal-50 text-teal-800' : 'border-stone-200 bg-white text-stone-500'}`}>
+            流量 L/min
+          </button>
+          <button onClick={() => setMode('fio2')}
+            className={`py-3 rounded-lg border-2 text-sm font-semibold ${mode === 'fio2' ? 'border-teal-600 bg-teal-50 text-teal-800' : 'border-stone-200 bg-white text-stone-500'}`}>
+            FiO₂ %
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-end">
+        <div>
+          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">原值</label>
+          <div className="mt-1 relative">
+            <input type="number" inputMode="decimal" step="0.5" value={original} onChange={e => setOriginal(e.target.value)}
+              className="w-full text-2xl font-semibold tabular-nums bg-white border border-stone-300 rounded-lg px-3 py-3 pr-12 outline-none focus:border-teal-600" />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-stone-400">{unit}</span>
+          </div>
+        </div>
+        <div className="pb-3 text-stone-400 text-2xl">→</div>
+        <div>
+          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">調整後</label>
+          <div className="mt-1 relative">
+            <input type="number" inputMode="decimal" step="0.5" value={adjusted} onChange={e => setAdjusted(e.target.value)}
+              className="w-full text-2xl font-semibold tabular-nums bg-white border border-stone-300 rounded-lg px-3 py-3 pr-12 outline-none focus:border-teal-600" />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-stone-400">{unit}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-stone-200 p-4">
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">調整前的 SpO₂</label>
+          <label className="flex items-center gap-1.5 text-xs text-stone-600">
+            <input type="checkbox" checked={copd} onChange={e => setCopd(e.target.checked)} className="accent-teal-600" />
+            COPD
+          </label>
+        </div>
+        <div className="relative">
+          <input type="number" inputMode="decimal" value={spo2} onChange={e => setSpo2(e.target.value)}
+            placeholder={copd ? '目標 88–92' : '目標 92–96'}
+            className="w-full text-xl font-semibold tabular-nums bg-stone-50 border border-stone-200 rounded-lg px-3 py-2.5 pr-8 outline-none focus:border-teal-600" />
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-stone-400">%</span>
+        </div>
+        {auto !== null && manualOk === null && (
+          <div className="mt-2 text-xs text-stone-600">
+            自動判定：<span className={auto ? 'text-emerald-700 font-semibold' : 'text-rose-700 font-semibold'}>
+              {auto ? '符合' : '不符合'}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">符合標準</label>
+        <div className="mt-1 grid grid-cols-2 gap-2">
+          <button onClick={() => setManualOk(manualOk === true ? null : true)}
+            className={`py-3 rounded-lg border-2 text-sm font-semibold ${compliant === true ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-stone-200 bg-white text-stone-400'}`}>
+            ✓ 符合
+          </button>
+          <button onClick={() => setManualOk(manualOk === false ? null : false)}
+            className={`py-3 rounded-lg border-2 text-sm font-semibold ${compliant === false ? 'border-rose-600 bg-rose-50 text-rose-800' : 'border-stone-200 bg-white text-stone-400'}`}>
+            ✗ 不符合
+          </button>
+        </div>
+      </div>
+
+      <button onClick={submit} disabled={saving}
+        className="w-full py-4 rounded-xl bg-stone-900 text-white text-base font-semibold active:bg-stone-700 shadow-sm disabled:opacity-50">
+        {saving ? '儲存中…' : '儲存稽核'}
+      </button>
+    </div>
+  );
+}
+
+// =====================================================================
+function StatsView({ loading, weeklyStats, thisWeek, overall, records }) {
+  // 各病房本週符合率
+  const wardStats = useMemo(() => {
+    const thisWeekKey = getISOWeek(new Date());
+    const weekRecords = records.filter(r => getISOWeek(new Date(r.created_at)) === thisWeekKey);
+    return WARDS.map(w => {
+      const wr = weekRecords.filter(r => r.ward === w);
+      const ok = wr.filter(r => r.compliant).length;
+      return { ward: w, total: wr.length, ok, rate: wr.length ? Math.round((ok / wr.length) * 100) : 0 };
+    });
+  }, [records]);
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-3">
+        <StatCard label="本週" value={`${thisWeek.rate}%`} sub={`${thisWeek.ok}/${thisWeek.total}`} />
+        <StatCard label="累計" value={`${overall.rate}%`} sub={`${overall.ok}/${overall.total}`} />
+        <StatCard label="不符合" value={overall.total - overall.ok} sub="累計件數" />
+      </div>
+
+      <div className="bg-white rounded-xl border border-stone-200 p-4">
+        <div className="text-sm font-semibold text-stone-700 mb-3">本週各病房</div>
+        <div className="space-y-2">
+          {wardStats.map(w => (
+            <div key={w.ward} className="flex items-center justify-between text-sm py-1">
+              <span className="font-semibold text-stone-700 w-12">{w.ward}</span>
+              <div className="flex items-center gap-3">
+                <span className="text-stone-500 text-xs tabular-nums">{w.ok}/{w.total}</span>
+                <span className={`font-semibold tabular-nums w-12 text-right ${w.total === 0 ? 'text-stone-300' : w.rate >= 80 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {w.total === 0 ? '—' : `${w.rate}%`}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-stone-200 p-4">
+        <div className="text-sm font-semibold text-stone-700 mb-3">每週符合率趨勢</div>
+        {loading ? <div className="text-center text-stone-400 py-10 text-sm">載入中…</div>
+          : weeklyStats.length === 0 ? <div className="text-center text-stone-400 py-10 text-sm">尚無資料</div>
+            : <WeeklyChart data={weeklyStats} />}
+      </div>
+
+      <div className="bg-white rounded-xl border border-stone-200 p-4">
+        <div className="text-sm font-semibold text-stone-700 mb-3">每週明細</div>
+        {weeklyStats.length === 0 ? <div className="text-stone-400 text-sm">—</div>
+          : (
+            <div className="space-y-1.5">
+              {[...weeklyStats].reverse().map(w => (
+                <div key={w.week} className="flex items-center justify-between text-sm py-1">
+                  <span className="text-stone-600 tabular-nums">{w.week}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-stone-500 text-xs tabular-nums">{w.ok}/{w.total}</span>
+                    <span className={`font-semibold tabular-nums w-12 text-right ${w.rate >= 80 ? 'text-emerald-700' : 'text-rose-700'}`}>{w.rate}%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
+    </div>
+  );
+}
+
+function WeeklyChart({ data }) {
+  const W = 320, H = 200;
+  const pad = { t: 18, r: 15, b: 28, l: 28 };
+  const cw = W - pad.l - pad.r;
+  const ch = H - pad.t - pad.b;
+  const x = (i) => pad.l + (data.length === 1 ? cw / 2 : (i / (data.length - 1)) * cw);
+  const y = (v) => pad.t + ch - (v / 100) * ch;
+  const linePath = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(d.rate).toFixed(1)}`).join(' ');
+  const labelStep = Math.max(1, Math.ceil(data.length / 6));
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+      {[0, 25, 50, 75, 100].map(v => (
+        <g key={v}>
+          <line x1={pad.l} y1={y(v)} x2={W - pad.r} y2={y(v)} stroke="#e7e5e4" strokeDasharray="3 3" />
+          <text x={pad.l - 4} y={y(v) + 3} fontSize="9" fill="#a8a29e" textAnchor="end">{v}</text>
+        </g>
+      ))}
+      <line x1={pad.l} y1={y(80)} x2={W - pad.r} y2={y(80)} stroke="#f59e0b" strokeDasharray="4 4" strokeWidth="1.5" />
+      <path d={linePath} stroke="#0f766e" strokeWidth="2.5" fill="none" strokeLinejoin="round" />
+      {data.map((d, i) => (
+        <circle key={i} cx={x(i)} cy={y(d.rate)} r="3.5" fill="#0f766e" />
+      ))}
+      {data.map((d, i) => (
+        i % labelStep === 0 || i === data.length - 1 ? (
+          <text key={i} x={x(i)} y={H - 8} fontSize="9" fill="#78716c" textAnchor="middle">
+            W{d.week.split('-W')[1]}
+          </text>
+        ) : null
+      ))}
+    </svg>
+  );
+}
+
+// =====================================================================
+function ListView({ loading, records, session, profile, onDelete, onRefresh }) {
+  const [wardFilter, setWardFilter] = useState('all');
+
+  const filtered = useMemo(() => {
+    if (wardFilter === 'all') return records;
+    return records.filter(r => r.ward === wardFilter);
+  }, [records, wardFilter]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <select value={wardFilter} onChange={e => setWardFilter(e.target.value)}
+          className="bg-white border border-stone-200 rounded-lg px-3 py-1.5 text-xs">
+          <option value="all">所有病房</option>
+          {WARDS.map(w => <option key={w} value={w}>{w}</option>)}
+        </select>
+        <button onClick={onRefresh} className="text-xs text-stone-500 px-3 py-1.5 border border-stone-200 rounded-lg bg-white">
+          重新整理
+        </button>
+      </div>
+      {loading ? <div className="text-center text-stone-400 py-10 text-sm">載入中…</div>
+        : filtered.length === 0 ? <div className="text-center text-stone-400 py-10 text-sm">尚無記錄</div>
+          : filtered.map(r => {
+            const d = new Date(r.created_at);
+            return (
+              <div key={r.id} className="bg-white rounded-lg border border-stone-200 p-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] bg-stone-200 text-stone-700 px-1.5 py-0.5 rounded font-semibold">{r.ward}</span>
+                    <span className="text-lg font-bold tabular-nums">{r.bed_number}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${r.compliant ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                      {r.compliant ? '符合' : '不符合'}
+                    </span>
+                  </div>
+                  {profile.is_admin && <button onClick={() => onDelete(r.id)} className="text-stone-300 text-xs hover:text-rose-600">刪除</button>}
+                </div>
+                <div className="mt-1 text-sm tabular-nums text-stone-700">
+                  {r.original_value} → {r.adjusted_value} {r.mode === 'flow' ? 'L/min' : '%'}
+                  {r.spo2 != null && <span className="text-stone-400 ml-2">SpO₂ {r.spo2}%{r.copd ? ' · COPD' : ''}</span>}
+                </div>
+                <div className="text-[11px] text-stone-400 mt-0.5 flex items-center gap-2">
+                  <span>{r.auditor_name}</span>
+                  <span>·</span>
+                  <span>{d.toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+              </div>
+            );
+          })}
+    </div>
+  );
+}
+
+// =====================================================================
+function SettingsView({ session, profile, records, cfg, sb, apiCall, onSignOut, onProfileUpdate }) {
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl border border-stone-200 p-4">
+        <div className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">帳號</div>
+        <div className="mt-1 text-lg font-semibold">
+          {profile.name}
+          {profile.is_admin && <span className="ml-2 text-xs bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full">管理員</span>}
+        </div>
+        <div className="text-sm text-stone-500">{session.user.email}</div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-stone-200 p-4">
+        <div className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">團隊累計</div>
+        <div className="mt-1 text-2xl font-bold tabular-nums serif">{records.length}</div>
+        <div className="text-xs text-stone-500">筆稽核記錄</div>
+      </div>
+
+      <ChangeNameCard profile={profile} sb={sb} apiCall={apiCall} onSuccess={onProfileUpdate} />
+      <ChangePasswordCard sb={sb} session={session} />
+
+      {profile.is_admin && (
+        <UserManagementCard session={session} sb={sb} apiCall={apiCall} cfg={cfg} />
+      )}
+
+      <ExportCard records={records} />
+
+      <button onClick={onSignOut}
+        className="w-full py-3 rounded-xl border border-rose-200 bg-white text-rose-700 font-semibold active:bg-rose-50">
+        登出
+      </button>
+    </div>
+  );
+}
+
+// =====================================================================
+function ChangeNameCard({ profile, sb, apiCall, onSuccess }) {
+  const [name, setName] = useState(profile.name);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  const submit = async () => {
+    setMsg(''); setErr('');
+    if (!name.trim()) { setErr('名稱不能空白'); return; }
+    if (name.trim() === profile.name) return;
+    setBusy(true);
+    try {
+      const updated = await apiCall(t => sb.update('profiles', `id=eq.${profile.id}`, { name: name.trim() }, t));
+      if (updated[0]) onSuccess(updated[0]);
+      setMsg('已更新');
+      setTimeout(() => setMsg(''), 2000);
+    } catch (e) {
+      setErr('更新失敗：' + e.message);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
+      <div className="text-sm font-semibold text-stone-700">變更顯示名稱</div>
+      <input value={name} onChange={e => setName(e.target.value)}
+        className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-teal-600" />
+      {err && <div className="text-rose-600 text-sm">{err}</div>}
+      {msg && <div className="text-emerald-700 text-sm">{msg}</div>}
+      <button onClick={submit} disabled={busy || name.trim() === profile.name || !name.trim()}
+        className="w-full py-2.5 rounded-lg bg-stone-900 text-white text-sm font-semibold active:bg-stone-700 disabled:opacity-40">
+        {busy ? '更新中…' : '更新名稱'}
+      </button>
+    </div>
+  );
+}
+
+// =====================================================================
+function ChangePasswordCard({ sb, session }) {
+  const [pwd1, setPwd1] = useState('');
+  const [pwd2, setPwd2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  const submit = async () => {
+    setMsg(''); setErr('');
+    if (pwd1.length < 6) { setErr('密碼至少 6 字元'); return; }
+    if (pwd1 !== pwd2) { setErr('兩次密碼不一致'); return; }
+    setBusy(true);
+    try {
+      await sb.updateOwnPassword(pwd1, session.access_token);
+      setMsg('密碼已更新');
+      setPwd1(''); setPwd2('');
+      setTimeout(() => setMsg(''), 2500);
+    } catch (e) {
+      setErr(e.message);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
+      <div className="text-sm font-semibold text-stone-700">變更密碼</div>
+      <input type="password" value={pwd1} onChange={e => setPwd1(e.target.value)}
+        placeholder="新密碼（至少 6 字元）" autoComplete="new-password"
+        className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-teal-600" />
+      <input type="password" value={pwd2} onChange={e => setPwd2(e.target.value)}
+        placeholder="再次輸入新密碼" autoComplete="new-password"
+        className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-teal-600" />
+      {err && <div className="text-rose-600 text-sm">{err}</div>}
+      {msg && <div className="text-emerald-700 text-sm">{msg}</div>}
+      <button onClick={submit} disabled={busy}
+        className="w-full py-2.5 rounded-lg bg-stone-900 text-white text-sm font-semibold active:bg-stone-700 disabled:opacity-50">
+        {busy ? '更新中…' : '更新密碼'}
+      </button>
+    </div>
+  );
+}
+
+// =====================================================================
+function UserManagementCard({ session, sb, apiCall, cfg }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null);
+  const [editName, setEditName] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiCall(t => sb.select('profiles', 'select=*&order=created_at.asc', t));
+      setUsers(data);
+    } catch (e) {
+      alert('讀取失敗：' + e.message);
+    } finally { setLoading(false); }
+  }, [apiCall, sb]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const startEdit = (u) => { setEditing(u.id); setEditName(u.name); };
+
+  const saveEdit = async () => {
+    if (!editName.trim()) { alert('名稱不能空白'); return; }
+    try {
+      await apiCall(t => sb.update('profiles', `id=eq.${editing}`, { name: editName.trim() }, t));
+      setUsers(prev => prev.map(x => x.id === editing ? { ...x, name: editName.trim() } : x));
+      setEditing(null);
+    } catch (e) {
+      alert('儲存失敗：' + e.message);
+    }
+  };
+
+  const toggleAdmin = async (u) => {
+    const newVal = !u.is_admin;
+    if (u.id === session.user.id && !newVal) {
+      const others = users.filter(x => x.id !== u.id && x.is_admin);
+      if (others.length === 0) {
+        alert('不能取消最後一位管理員的權限，請先指派其他管理員');
+        return;
+      }
+      if (!confirm('要取消自己的管理員權限嗎？取消後將失去管理功能。')) return;
+    } else {
+      const action = newVal ? '設為' : '取消';
+      if (!confirm(`要${action}「${u.name}」的管理員權限嗎？`)) return;
+    }
+    try {
+      await apiCall(t => sb.update('profiles', `id=eq.${u.id}`, { is_admin: newVal }, t));
+      setUsers(prev => prev.map(x => x.id === u.id ? { ...x, is_admin: newVal } : x));
+    } catch (e) {
+      alert('變更失敗：' + e.message);
+    }
+  };
+
+  // 解析 Supabase Dashboard 網址（從 project URL）
+  const projectId = (cfg.url.match(/https:\/\/([^.]+)\./) || [])[1];
+  const dashUrl = projectId ? `https://supabase.com/dashboard/project/${projectId}/auth/users` : null;
+
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold text-stone-700">使用者管理</div>
+        <button onClick={load} className="text-xs text-stone-500">重新整理</button>
+      </div>
+
+      {loading ? <div className="text-stone-400 text-sm text-center py-4">載入中…</div>
+        : (
+          <div className="space-y-2">
+            {users.map(u => (
+              <div key={u.id} className="border border-stone-200 rounded-lg p-3">
+                {editing === u.id ? (
+                  <div className="space-y-2">
+                    <input value={editName} onChange={e => setEditName(e.target.value)} autoFocus
+                      className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-teal-600" />
+                    <div className="flex gap-2">
+                      <button onClick={saveEdit} className="flex-1 py-1.5 rounded bg-teal-700 text-white text-xs font-semibold">儲存</button>
+                      <button onClick={() => setEditing(null)} className="flex-1 py-1.5 rounded border border-stone-300 text-stone-600 text-xs">取消</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold">{u.name}</span>
+                        {u.is_admin && <span className="text-[10px] bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded-full">管理員</span>}
+                        {u.id === session.user.id && <span className="text-[10px] text-stone-400">（你）</span>}
+                      </div>
+                      <button onClick={() => startEdit(u)} className="text-xs text-stone-500 hover:text-stone-900">編輯</button>
+                    </div>
+                    <div className="mt-2 flex gap-2">
+                      <button onClick={() => toggleAdmin(u)}
+                        className={`text-xs px-2.5 py-1 rounded border ${u.is_admin ? 'border-rose-200 text-rose-700 hover:bg-rose-50' : 'border-teal-300 text-teal-700 hover:bg-teal-50'}`}>
+                        {u.is_admin ? '取消管理員' : '設為管理員'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+      <div className="pt-3 border-t border-stone-100 space-y-2">
+        <div className="text-xs font-semibold text-stone-600">新增 / 刪除帳號 / 重設他人密碼</div>
+        <p className="text-xs text-stone-500 leading-relaxed">
+          這些操作需在 Supabase 後台執行（Authentication → Users）。新增使用者時務必勾選 <span className="font-mono bg-stone-100 px-1">Auto Confirm User</span>。
+        </p>
+        {dashUrl && (
+          <a href={dashUrl} target="_blank" rel="noopener noreferrer"
+            className="block text-center w-full py-2 rounded-lg bg-stone-100 text-stone-700 text-xs font-semibold hover:bg-stone-200">
+            開啟 Supabase 使用者管理 ↗
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
+function ExportCard({ records }) {
+  const [exportWard, setExportWard] = useState('all');
+  const doExport = () => {
+    const rows = exportWard === 'all' ? records : records.filter(r => r.ward === exportWard);
+    if (rows.length === 0) { alert('沒有可匯出的資料'); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    const tag = exportWard === 'all' ? '全部' : exportWard;
+    downloadCSV(rows, `氧氣稽核_${today}_${tag}.csv`);
+  };
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
+      <div className="text-sm font-semibold text-stone-700">匯出 CSV</div>
+      <select value={exportWard} onChange={e => setExportWard(e.target.value)}
+        className="w-full bg-white border border-stone-300 rounded-lg px-3 py-2.5 text-sm">
+        <option value="all">全部病房</option>
+        {WARDS.map(w => <option key={w} value={w}>僅 {w}</option>)}
+      </select>
+      <button onClick={doExport}
+        className="w-full py-3 rounded-xl bg-teal-700 text-white font-semibold active:bg-teal-800">
+        下載 CSV
+      </button>
+      <p className="text-xs text-stone-400">CSV 內含 UTF-8 BOM，Excel 可直接開啟。</p>
+    </div>
+  );
+}
+
+// =====================================================================
+function StatCard({ label, value, sub }) {
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 p-3 text-center">
+      <div className="text-[10px] uppercase tracking-wider text-stone-500 font-semibold">{label}</div>
+      <div className="text-2xl font-bold tabular-nums text-stone-900 mt-0.5 serif">{value}</div>
+      <div className="text-[10px] text-stone-400 tabular-nums">{sub}</div>
+    </div>
+  );
+}
+
+// =====================================================================
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
