@@ -379,7 +379,7 @@ function LoginScreen({ sb, onLogin, onResetConfig }) {
 
       <div className="mt-12 pt-6 border-t border-stone-200 text-center">
         <p className="text-xs text-stone-400">developer 林鎮均</p>
-        <p className="text-xs text-stone-400 mt-0.5">version 1.0 · 2026-06-07</p>
+        <p className="text-xs text-stone-400 mt-0.5">version 1.1 · 2026-06-28</p>
       </div>
     </div>
   );
@@ -690,21 +690,21 @@ function StatsView({ loading, weeklyStats, thisWeek, overall, records }) {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-3 gap-3">
-        <StatCard label="本週" value={`${thisWeek.rate}%`} sub={`${thisWeek.ok}/${thisWeek.total}`} />
-        <StatCard label="累計" value={`${overall.rate}%`} sub={`${overall.ok}/${overall.total}`} />
+        <StatCard label="本週符合率" value={`${thisWeek.rate}%`} sub={`${thisWeek.ok}/${thisWeek.total}`} />
+        <StatCard label="累計符合率" value={`${overall.rate}%`} sub={`${overall.ok}/${overall.total}`} />
         <StatCard label="不符合" value={overall.total - overall.ok} sub="累計件數" />
       </div>
 
       <div className="bg-white rounded-xl border border-stone-200 p-4">
-        <div className="text-sm font-semibold text-stone-700 mb-3">本週各病房</div>
+        <div className="text-sm font-semibold text-stone-700 mb-3">本週各病房符合率</div>
         <div className="space-y-2">
           {wardStats.map(w => (
             <div key={w.ward} className="flex items-center justify-between text-sm py-1">
               <span className="font-semibold text-stone-700 w-12">{w.ward}</span>
               <div className="flex items-center gap-3">
                 <span className="text-stone-500 text-xs tabular-nums">{w.ok}/{w.total}</span>
-                <span className={`font-semibold tabular-nums w-12 text-right ${w.total === 0 ? 'text-stone-300' : w.rate >= 80 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                  {w.total === 0 ? '—' : `${w.rate}%`}
+                <span className={`font-semibold tabular-nums w-20 text-right ${w.total === 0 ? 'text-stone-300' : w.rate >= 80 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {w.total === 0 ? '—' : `${w.rate}% 符合率`}
                 </span>
               </div>
             </div>
@@ -729,7 +729,7 @@ function StatsView({ loading, weeklyStats, thisWeek, overall, records }) {
                   <span className="text-stone-600 tabular-nums">{w.week}</span>
                   <div className="flex items-center gap-3">
                     <span className="text-stone-500 text-xs tabular-nums">{w.ok}/{w.total}</span>
-                    <span className={`font-semibold tabular-nums w-12 text-right ${w.rate >= 80 ? 'text-emerald-700' : 'text-rose-700'}`}>{w.rate}%</span>
+                    <span className={`font-semibold tabular-nums w-20 text-right ${w.rate >= 80 ? 'text-emerald-700' : 'text-rose-700'}`}>{w.rate}% 符合率</span>
                   </div>
                 </div>
               ))}
@@ -776,20 +776,64 @@ function WeeklyChart({ data }) {
 // =====================================================================
 function ListView({ loading, records, session, profile, onDelete, onRefresh }) {
   const [wardFilter, setWardFilter] = useState('all');
+  const [periodFilter, setPeriodFilter] = useState('all');
 
   const filtered = useMemo(() => {
-    if (wardFilter === 'all') return records;
-    return records.filter(r => r.ward === wardFilter);
-  }, [records, wardFilter]);
+    const now = new Date();
+    const thisWeekKey = getISOWeek(now);
+
+    // 上週
+    const lastWeekDate = new Date(now);
+    lastWeekDate.setDate(lastWeekDate.getDate() - 7);
+    const lastWeekKey = getISOWeek(lastWeekDate);
+
+    // 本月起始
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // 本季起始（1/4/7/10 月）
+    const quarterMonth = Math.floor(now.getMonth() / 3) * 3;
+    const quarterStart = new Date(now.getFullYear(), quarterMonth, 1);
+
+    let result = records;
+
+    // 週別篩選
+    if (periodFilter === 'thisWeek') {
+      result = result.filter(r => getISOWeek(new Date(r.created_at)) === thisWeekKey);
+    } else if (periodFilter === 'lastWeek') {
+      result = result.filter(r => getISOWeek(new Date(r.created_at)) === lastWeekKey);
+    } else if (periodFilter === 'thisMonth') {
+      result = result.filter(r => new Date(r.created_at) >= monthStart);
+    } else if (periodFilter === 'thisQuarter') {
+      result = result.filter(r => new Date(r.created_at) >= quarterStart);
+    }
+
+    // 病房篩選
+    if (wardFilter !== 'all') {
+      result = result.filter(r => r.ward === wardFilter);
+    }
+
+    return result;
+  }, [records, wardFilter, periodFilter]);
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <select value={wardFilter} onChange={e => setWardFilter(e.target.value)}
           className="bg-white border border-stone-200 rounded-lg px-3 py-1.5 text-xs">
           <option value="all">所有病房</option>
           {WARDS.map(w => <option key={w} value={w}>{w}</option>)}
         </select>
+        <select value={periodFilter} onChange={e => setPeriodFilter(e.target.value)}
+          className="bg-white border border-stone-200 rounded-lg px-3 py-1.5 text-xs">
+          <option value="all">全部時間</option>
+          <option value="thisWeek">本週</option>
+          <option value="lastWeek">上週</option>
+          <option value="thisMonth">本月</option>
+          <option value="thisQuarter">本季</option>
+        </select>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-stone-400">共 {filtered.length} 筆</span>
         <button onClick={onRefresh} className="text-xs text-stone-500 px-3 py-1.5 border border-stone-200 rounded-lg bg-white">
           重新整理
         </button>
