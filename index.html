@@ -395,7 +395,7 @@ function LoginScreen({ sb, onLogin, onResetConfig }) {
 
       <div className="mt-12 pt-6 border-t border-stone-200 text-center">
         <p className="text-xs text-stone-400">developer 林鎮均</p>
-        <p className="text-xs text-stone-400 mt-0.5">version 1.3 · 2026-07-04</p>
+        <p className="text-xs text-stone-400 mt-0.5">version 1.5 · 2026-07-21</p>
       </div>
     </div>
   );
@@ -525,7 +525,7 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
 
       <main className="px-5 py-5 pb-24 max-w-md mx-auto">
         {tab === 'entry' && <EntryForm onSave={addRecord} session={session} profile={profile} showToast={showToast} />}
-        {tab === 'stats' && <StatsView loading={loading} weeklyStats={weeklyStats} thisWeek={thisWeek} overall={overall} records={records} />}
+        {tab === 'stats' && <StatsView loading={loading} records={records} />}
         {tab === 'list' && <ListView loading={loading} records={records} session={session} profile={profile} onDelete={delRecord} onRefresh={loadRecords} />}
         {tab === 'settings' && <SettingsView session={session} profile={profile} records={records} cfg={cfg} sb={sb} apiCall={apiCall} onSignOut={confirmSignOut} onProfileUpdate={onProfileUpdate} />}
       </main>
@@ -700,28 +700,80 @@ function EntryForm({ onSave, session, profile, showToast }) {
 }
 
 // =====================================================================
-function StatsView({ loading, weeklyStats, thisWeek, overall, records }) {
-  // 各病房本週符合率
-  const wardStats = useMemo(() => {
-    const thisWeekKey = getISOWeek(new Date());
-    const weekRecords = records.filter(r => getISOWeek(new Date(r.created_at)) === thisWeekKey);
-    return WARDS.map(w => {
-      const wr = weekRecords.filter(r => r.ward === w);
-      const ok = wr.filter(r => r.compliant).length;
-      return { ward: w, total: wr.length, ok, rate: wr.length ? Math.round((ok / wr.length) * 100) : 0 };
+// 依期間類型計算起始時間點（本地時區）
+const getPeriodStart = (period) => {
+  const now = new Date();
+  if (period === 'thisWeek') {
+    const day = now.getDay() || 7; // 週一=1...週日=7
+    const d = new Date(now);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - (day - 1));
+    return d;
+  }
+  if (period === 'thisMonth') return new Date(now.getFullYear(), now.getMonth(), 1);
+  if (period === 'thisQuarter') {
+    const qMonth = Math.floor(now.getMonth() / 3) * 3;
+    return new Date(now.getFullYear(), qMonth, 1);
+  }
+  if (period === 'thisYear') return new Date(now.getFullYear(), 0, 1);
+  return null; // all
+};
+
+const PERIOD_LABELS = { thisWeek: '本週', thisMonth: '本月', thisQuarter: '本季', thisYear: '本年', all: '全部' };
+
+function StatsView({ loading, records }) {
+  const [period, setPeriod] = useState('thisWeek');
+  const label = PERIOD_LABELS[period];
+
+  const periodRecords = useMemo(() => {
+    const start = getPeriodStart(period);
+    if (!start) return records;
+    return records.filter(r => new Date(r.created_at) >= start);
+  }, [records, period]);
+
+  const overall = useMemo(() => {
+    if (!periodRecords.length) return { total: 0, ok: 0, rate: 0 };
+    const ok = periodRecords.filter(r => r.compliant).length;
+    return { total: periodRecords.length, ok, rate: Math.round((ok / periodRecords.length) * 100) };
+  }, [periodRecords]);
+
+  const wardStats = useMemo(() => WARDS.map(w => {
+    const wr = periodRecords.filter(r => r.ward === w);
+    const ok = wr.filter(r => r.compliant).length;
+    return { ward: w, total: wr.length, ok, rate: wr.length ? Math.round((ok / wr.length) * 100) : 0 };
+  }), [periodRecords]);
+
+  const weeklyStats = useMemo(() => {
+    const map = {};
+    periodRecords.forEach(r => {
+      const k = getISOWeek(new Date(r.created_at));
+      if (!map[k]) map[k] = { week: k, total: 0, ok: 0 };
+      map[k].total++;
+      if (r.compliant) map[k].ok++;
     });
-  }, [records]);
+    return Object.values(map).sort((a, b) => a.week.localeCompare(b.week))
+      .map(w => ({ ...w, rate: w.total ? Math.round((w.ok / w.total) * 100) : 0 }));
+  }, [periodRecords]);
 
   return (
     <div className="space-y-5">
+      <select value={period} onChange={e => setPeriod(e.target.value)}
+        className="bg-white border border-stone-300 rounded-lg px-3 py-2 text-sm font-semibold">
+        <option value="thisWeek">本週</option>
+        <option value="thisMonth">本月</option>
+        <option value="thisQuarter">本季</option>
+        <option value="thisYear">本年</option>
+        <option value="all">全部</option>
+      </select>
+
       <div className="grid grid-cols-3 gap-3">
-        <StatCard label="本週符合率" value={`${thisWeek.rate}%`} sub={`${thisWeek.ok}/${thisWeek.total}`} />
-        <StatCard label="累計符合率" value={`${overall.rate}%`} sub={`${overall.ok}/${overall.total}`} />
-        <StatCard label="不符合" value={overall.total - overall.ok} sub="累計件數" />
+        <StatCard label={`${label}符合率`} value={`${overall.rate}%`} sub={`${overall.ok}/${overall.total}`} />
+        <StatCard label={`${label}稽核筆數`} value={overall.total} sub="筆" />
+        <StatCard label="不符合" value={overall.total - overall.ok} sub={`${label}件數`} />
       </div>
 
       <div className="bg-white rounded-xl border border-stone-200 p-4">
-        <div className="text-sm font-semibold text-stone-700 mb-3">本週各病房符合率</div>
+        <div className="text-sm font-semibold text-stone-700 mb-3">{label}各病房符合率</div>
         <div className="space-y-2">
           {wardStats.map(w => (
             <div key={w.ward} className="flex items-center justify-between text-sm py-1">
@@ -738,7 +790,7 @@ function StatsView({ loading, weeklyStats, thisWeek, overall, records }) {
       </div>
 
       <div className="bg-white rounded-xl border border-stone-200 p-4">
-        <div className="text-sm font-semibold text-stone-700 mb-3">每週符合率趨勢</div>
+        <div className="text-sm font-semibold text-stone-700 mb-3">每週符合率趨勢（{label}）</div>
         {loading ? <div className="text-center text-stone-400 py-10 text-sm">載入中…</div>
           : weeklyStats.length === 0 ? <div className="text-center text-stone-400 py-10 text-sm">尚無資料</div>
             : <WeeklyChart data={weeklyStats} />}
@@ -1135,12 +1187,24 @@ function UserManagementCard({ session, sb, apiCall, cfg }) {
 // =====================================================================
 function ExportCard({ records }) {
   const [exportWard, setExportWard] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
   const doExport = () => {
-    const rows = exportWard === 'all' ? records : records.filter(r => r.ward === exportWard);
+    let rows = exportWard === 'all' ? records : records.filter(r => r.ward === exportWard);
+    if (startDate) {
+      const start = new Date(startDate + 'T00:00:00');
+      rows = rows.filter(r => new Date(r.created_at) >= start);
+    }
+    if (endDate) {
+      const end = new Date(endDate + 'T23:59:59');
+      rows = rows.filter(r => new Date(r.created_at) <= end);
+    }
     if (rows.length === 0) { alert('沒有可匯出的資料'); return; }
     const today = new Date().toISOString().slice(0, 10);
     const tag = exportWard === 'all' ? '全部' : exportWard;
-    downloadCSV(rows, `氧氣稽核_${today}_${tag}.csv`);
+    const rangeTag = (startDate || endDate) ? `_${startDate || '起'}~${endDate || '今'}` : '';
+    downloadCSV(rows, `氧氣稽核_${today}_${tag}${rangeTag}.csv`);
   };
   return (
     <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
@@ -1150,11 +1214,23 @@ function ExportCard({ records }) {
         <option value="all">全部病房</option>
         {WARDS.map(w => <option key={w} value={w}>僅 {w}</option>)}
       </select>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">起始日期</label>
+          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+            className="mt-1 w-full bg-white border border-stone-300 rounded-lg px-2 py-2 text-sm outline-none focus:border-teal-600" />
+        </div>
+        <div>
+          <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">結束日期</label>
+          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+            className="mt-1 w-full bg-white border border-stone-300 rounded-lg px-2 py-2 text-sm outline-none focus:border-teal-600" />
+        </div>
+      </div>
       <button onClick={doExport}
         className="w-full py-3 rounded-xl bg-teal-700 text-white font-semibold active:bg-teal-800">
         下載 CSV
       </button>
-      <p className="text-xs text-stone-400">CSV 內含 UTF-8 BOM，Excel 可直接開啟。</p>
+      <p className="text-xs text-stone-400">CSV 內含 UTF-8 BOM，Excel 可直接開啟。日期留空代表不限制。</p>
     </div>
   );
 }
