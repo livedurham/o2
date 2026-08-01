@@ -5,10 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="氧氣稽核">
+<meta name="theme-color" content="#0f766e">
 <title>氧氣稽核</title>
+<!-- ===== 加入主畫面用的 O₂ icon（teal 底＋白色 O₂ 字標，Poppins Bold）=====
+     圖檔以 base64 內嵌，維持單一 HTML 檔即可部署。
+     若某些裝置的主畫面圖示沒生效，改用同資料夾的 PNG：
+       <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+       <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+-->
+<link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,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">
+<link rel="icon" type="image/png" sizes="192x192" href="data:image/png;base64,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">
+<link rel="icon" type="image/png" sizes="512x512" href="data:image/png;base64,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">
+<link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAkFBMVEX////+//79/v73+vrt9fTU5+W/29ijy8iAt7JnqKRPm5VAkoswiYImg3wff3gWenMUeXETeHASeHAReHASd3ARd28QfXUQeXEPeXEPeHEQd28Pd28OeHEAf38Od24Qdm4Pdm4Odm0PdW4PdW0OdW0OdG0LdGwJcmoIcmoGcWkKbmwDb2cCbmYAbWUAa2IAAADBvFREAAABbklEQVR42oWT65aCIBRGT4iERF5IrKwmSjIV1Pd/u6HLmuw27h+uJW7W+cBzoN/1zXa9UW9s1tvGfYRdf1plK/UBt3zqd9Afs2VRfBKKYpkde2h+Vkf1hePqpwGdFeorRabhsPxPWB5AjfAQ9iJVKk323wSpW3NQptXpZ0HUIiC+T4K4Fp+EtOY+XPF5nb4L8jzHAJiQy3N+lm+CsFNAJDQmJAimVrwKeTnHyOM2ji33EJ6XIknkUBBm5oqf3UZxdlFmddl2tXwSGACp3JKsCADrOKX8blwFWXMPcKzjWEcYEL8k9mY34xYyL/0J0M7ajgLyO4oC5l6TwSlcDTSZBsF0goDZkHcBBO1AcOekcIfaheq450c6H161tIx4rjJhVi7sDPvRrcLjZwlTccZ4ZURqmLstyoYhr0ZeGVPlQiUdxdh7DnkvI8R1k47DMIzig3oV/tClQ6vvwj533FtrvGlH2350cEZHb3x4R8b/Fycib0KmKWUMAAAAAElFTkSuQmCC">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=Fraunces:wght@600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=Fraunces:wght@600;700&family=Poppins:wght@700&display=swap">
 <script>
   // 隱藏 Tailwind CDN 的開發提醒訊息（不影響功能或其他警告）
   (function() {
@@ -29,6 +41,8 @@
 <style>
   body { font-family: "Noto Sans TC", -apple-system, BlinkMacSystemFont, sans-serif; -webkit-tap-highlight-color: transparent; }
   .serif { font-family: Fraunces, serif; }
+  /* O₂ 字標：Poppins（幾何無襯線，O 接近正圓，不會有 Fraunces 的傾斜感） */
+  .o2mark { font-family: Poppins, "Noto Sans TC", sans-serif; font-weight: 700; }
   input[type=number]::-webkit-outer-spin-button,
   input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   input[type=number] { -moz-appearance: textfield; }
@@ -50,6 +64,36 @@ const EMBEDDED_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3M
 
 // ===== 病房選項（要增加病房，編輯這裡，也要記得改 SQL 的 ward check 限制） =====
 const WARDS = ['5A', 'RCC'];
+
+// =====================================================================
+// ===== 不符合原因分類（v2.0 新增）=====
+// group: actionable = 可改善（列入 QI 改善目標）
+//        justified  = 臨床合理（分開統計，不列為缺失）
+//        pending    = 待判定（事後看文字內容人工歸組）
+//
+// ※ 要改分類：只要動這個陣列即可，資料庫不需變更。
+//   已存的舊紀錄仍保留原本的代碼，統計時會落在「未知分類」。
+// =====================================================================
+const REASONS = [
+  { code: 'titrating',    label: '調降中，尚未達標',  hint: '正在往下調或更換給氧模式',            group: 'actionable' },
+  { code: 'acute',        label: '急性症狀暫不調降',  hint: '發燒、喘鳴、抽搐、肺積水、腹脹等',     group: 'justified' },
+  { code: 'intermittent', label: '間歇性低血氧',      hint: '活動／復健後掉血氧；日夜或分時段交替', group: 'justified' },
+  { code: 'humidify',     label: '氧氣用於濕化',      hint: '濕化痰液、氣切加濕',                  group: 'actionable' },
+  { code: 'other',        label: '其他',              hint: '以上皆非，需填寫說明',                group: 'pending' },
+];
+
+const REASON_MAP = {};
+REASONS.forEach(r => { REASON_MAP[r.code] = r; });
+
+const GROUP_LABELS = { actionable: '可改善', justified: '臨床合理', pending: '待判定' };
+const GROUP_ORDER = ['actionable', 'justified', 'pending'];
+
+// ===== 原因分類的啟用日期 =====
+// 這天（含）之後建立的紀錄，選「不符合」時就必須選原因。
+// 這天之前的舊紀錄完全不動，也不納入原因統計的分母。
+const REASON_START_DATE = '2026-08-03';
+const reasonGateTime = new Date(REASON_START_DATE + 'T00:00:00').getTime();
+const isAfterGate = (dateLike) => new Date(dateLike).getTime() >= reasonGateTime;
 
 // ===== Storage keys =====
 const CFG_KEY = 'oxy-audit-cfg';
@@ -159,7 +203,7 @@ const getISOWeek = (date) => {
 };
 
 const downloadCSV = (rows, filename) => {
-  const headers = ['時間', '稽核者', '病房', '床號', '模式', '原值', '調整後', 'SpO2', 'COPD', '符合標準', '註記'];
+  const headers = ['時間', '稽核者', '病房', '床號', '模式', '原值', '調整後', 'SpO2', 'COPD', '符合標準', '不符合原因', '原因組別', '原因說明', '註記'];
   const escape = (v) => {
     if (v === null || v === undefined) return '';
     const s = String(v);
@@ -170,6 +214,7 @@ const downloadCSV = (rows, filename) => {
   };
   const lines = [headers.join(',')];
   rows.forEach(r => {
+    const rs = r.noncompliance_reason ? REASON_MAP[r.noncompliance_reason] : null;
     lines.push([
       new Date(r.created_at).toLocaleString('zh-TW', { hour12: false }),
       r.auditor_name,
@@ -181,6 +226,9 @@ const downloadCSV = (rows, filename) => {
       r.spo2 == null ? '' : r.spo2,
       r.copd ? '是' : '否',
       r.compliant ? '符合' : '不符合',
+      rs ? rs.label : '',
+      rs ? GROUP_LABELS[rs.group] : '',
+      r.reason_note || '',
       r.note || '',
     ].map(escape).join(','));
   });
@@ -195,6 +243,19 @@ const downloadCSV = (rows, filename) => {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 };
+
+// ===== O₂ 字標（畫面上用，與主畫面 icon 同一造型）=====
+// 用 Poppins 排 O + 下標 2。不用 ₂ 字元，避免字型缺字時 fallback 造成大小不一。
+// 註：標題用 Fraunces（襯線），但 Fraunces 的 O 是傾斜應力軸，放大會看起來歪斜，
+//     所以字標另外走 Poppins（幾何無襯線，O 接近正圓）。
+function O2Mark({ size = 30, className = '' }) {
+  return (
+    <span className={`o2mark select-none ${className}`}
+      style={{ fontSize: `${size}px`, lineHeight: 1, letterSpacing: '-0.01em' }}>
+      O<sub style={{ fontSize: '0.60em', bottom: '-0.06em', marginLeft: '0.01em' }}>2</sub>
+    </span>
+  );
+}
 
 // =====================================================================
 function App() {
@@ -375,7 +436,10 @@ function LoginScreen({ sb, onLogin, onResetConfig }) {
 
   return (
     <div className="px-5 pt-12 pb-10 max-w-md mx-auto">
-      <h1 className="text-2xl font-bold serif">登入</h1>
+      <div className="flex items-center gap-2.5">
+        <span className="text-teal-700"><O2Mark size={30} /></span>
+        <h1 className="text-2xl font-bold serif">登入</h1>
+      </div>
       <p className="text-sm text-stone-500 mt-1">氧氣稽核稽核員專用</p>
       <div className="mt-8 space-y-3">
         <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email" autoComplete="email"
@@ -395,7 +459,7 @@ function LoginScreen({ sb, onLogin, onResetConfig }) {
 
       <div className="mt-12 pt-6 border-t border-stone-200 text-center">
         <p className="text-xs text-stone-400">developer 林鎮均</p>
-        <p className="text-xs text-stone-400 mt-0.5">version 1.5 · 2026-07-21</p>
+        <p className="text-xs text-stone-400 mt-0.5">version 2.0 · 2026-07-29</p>
       </div>
     </div>
   );
@@ -474,21 +538,19 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
   }, [records]);
 
   const thisWeek = weeklyStats.find(w => w.week === thisWeekKey) || { rate: 0, total: 0, ok: 0 };
-  const overall = useMemo(() => {
-    if (!records.length) return { total: 0, ok: 0, rate: 0 };
-    const ok = records.filter(r => r.compliant).length;
-    return { total: records.length, ok, rate: Math.round((ok / records.length) * 100) };
-  }, [records]);
 
   return (
     <div className="min-h-screen">
       <header className="px-5 pt-6 pb-4 bg-white border-b border-stone-200">
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight serif">氧氣稽核</h1>
-            <p className="text-[11px] text-stone-500 mt-0.5">
-              {profile.name}{profile.is_admin ? ' · 管理員' : ''}
-            </p>
+          <div className="flex items-center gap-2.5">
+            <span className="text-teal-700 flex-none"><O2Mark size={30} /></span>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight serif">氧氣稽核</h1>
+              <p className="text-[11px] text-stone-500 mt-0.5">
+                {profile.name}{profile.is_admin ? ' · 管理員' : ''}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <div className="text-right">
@@ -549,6 +611,8 @@ function EntryForm({ onSave, session, profile, showToast }) {
   const [spo2, setSpo2] = useState('');
   const [copd, setCopd] = useState(false);
   const [manualOk, setManualOk] = useState(null);
+  const [reason, setReason] = useState('');
+  const [reasonNote, setReasonNote] = useState('');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -564,9 +628,18 @@ function EntryForm({ onSave, session, profile, showToast }) {
   const compliant = manualOk !== null ? manualOk : auto;
   const unit = mode === 'flow' ? 'L/min' : '%';
 
+  // 原因分類已啟用？（2026-08-03 起）
+  const reasonActive = isAfterGate(new Date());
+
+  // 一旦不是「不符合」，清掉已選的原因，避免誤存
+  useEffect(() => {
+    if (compliant !== false) { setReason(''); setReasonNote(''); }
+  }, [compliant]);
+
   const reset = () => {
     setBed(''); setOriginal(''); setAdjusted(''); setSpo2('');
     setManualOk(null); setCopd(false); setNote('');
+    setReason(''); setReasonNote('');
   };
 
   const submit = async () => {
@@ -574,6 +647,10 @@ function EntryForm({ onSave, session, profile, showToast }) {
     if (bed.trim().length > 6) { showToast('床號最多 6 字元'); return; }
     if (original === '' || adjusted === '') { showToast('請輸入原值與調整後'); return; }
     if (compliant === null) { showToast('請判定是否符合標準'); return; }
+    if (compliant === false && reasonActive) {
+      if (!reason) { showToast('請選擇不符合原因'); return; }
+      if (reason === 'other' && !reasonNote.trim()) { showToast('選「其他」時請填寫說明'); return; }
+    }
     setSaving(true);
     try {
       await onSave({
@@ -587,6 +664,8 @@ function EntryForm({ onSave, session, profile, showToast }) {
         spo2: spo2 === '' ? null : parseFloat(spo2),
         copd,
         compliant: compliant === true,
+        noncompliance_reason: compliant === false && reason ? reason : null,
+        reason_note: compliant === false && reasonNote.trim() ? reasonNote.trim() : null,
         note: note.trim() || null,
       });
       reset();
@@ -684,6 +763,34 @@ function EntryForm({ onSave, session, profile, showToast }) {
         </div>
       </div>
 
+      {/* ===== 不符合原因（只在判定為不符合時出現）===== */}
+      {compliant === false && (
+        <div className="bg-white rounded-xl border-2 border-rose-200 p-4 space-y-2">
+          <div className="flex items-baseline justify-between">
+            <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">
+              不符合原因 {reasonActive && <span className="text-rose-500">*</span>}
+            </label>
+            {!reasonActive && <span className="text-[10px] text-stone-400">{REASON_START_DATE} 起必填</span>}
+          </div>
+          <div className="space-y-1.5">
+            {REASONS.map(r => (
+              <button key={r.code} onClick={() => setReason(reason === r.code ? '' : r.code)}
+                className={`w-full text-left px-3 py-2.5 rounded-lg border-2 ${reason === r.code ? 'border-teal-600 bg-teal-50' : 'border-stone-200 bg-white'}`}>
+                <div className={`text-sm font-semibold ${reason === r.code ? 'text-teal-800' : 'text-stone-700'}`}>
+                  {r.label}
+                </div>
+                <div className="text-[11px] text-stone-500 mt-0.5 leading-snug">{r.hint}</div>
+              </button>
+            ))}
+          </div>
+          {reason === 'other' && (
+            <textarea value={reasonNote} onChange={e => setReasonNote(e.target.value)} rows={2} autoFocus
+              placeholder="請說明原因（必填）"
+              className="w-full bg-stone-50 border border-stone-300 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-teal-600 resize-none" />
+          )}
+        </div>
+      )}
+
       <div>
         <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">註記（選填）</label>
         <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
@@ -755,6 +862,30 @@ function StatsView({ loading, records }) {
       .map(w => ({ ...w, rate: w.total ? Math.round((w.ok / w.total) * 100) : 0 }));
   }, [periodRecords]);
 
+  // ===== 原因分析（只計 REASON_START_DATE 之後的紀錄）=====
+  const reasonAnalysis = useMemo(() => {
+    const gated = periodRecords.filter(r => isAfterGate(r.created_at));
+    const nonComp = gated.filter(r => !r.compliant);
+    const byReason = {};
+    REASONS.forEach(r => { byReason[r.code] = 0; });
+    let uncoded = 0;
+    const groupCount = { actionable: 0, justified: 0, pending: 0 };
+    nonComp.forEach(r => {
+      const meta = r.noncompliance_reason ? REASON_MAP[r.noncompliance_reason] : null;
+      if (!meta) { uncoded++; return; }
+      byReason[meta.code]++;
+      groupCount[meta.group]++;
+    });
+    return {
+      base: gated.length,          // 分母：啟用後的全部稽核
+      nonComp: nonComp.length,
+      byReason, uncoded, groupCount,
+      actionableRate: gated.length ? Math.round((groupCount.actionable / gated.length) * 100) : 0,
+    };
+  }, [periodRecords]);
+
+  const ra = reasonAnalysis;
+
   return (
     <div className="space-y-5">
       <select value={period} onChange={e => setPeriod(e.target.value)}
@@ -789,6 +920,61 @@ function StatsView({ loading, records }) {
         </div>
       </div>
 
+      {/* ===== 不符合原因分析 ===== */}
+      <div className="bg-white rounded-xl border border-stone-200 p-4">
+        <div className="flex items-baseline justify-between mb-1">
+          <div className="text-sm font-semibold text-stone-700">不符合原因分析</div>
+          <div className="text-[10px] text-stone-400">{REASON_START_DATE} 起</div>
+        </div>
+
+        {ra.base === 0 ? (
+          <div className="text-center text-stone-400 py-8 text-sm leading-relaxed">
+            {REASON_START_DATE} 起才開始記錄原因<br />
+            <span className="text-xs">此期間尚無適用資料</span>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-2">
+              <MiniStat label="可改善" value={`${ra.actionableRate}%`} sub={`${ra.groupCount.actionable} 件`} tone="rose" />
+              <MiniStat label="臨床合理" value={ra.groupCount.justified} sub="件" tone="emerald" />
+              <MiniStat label="待判定" value={ra.groupCount.pending} sub="件" tone="stone" />
+            </div>
+            <p className="text-[11px] text-stone-500 leading-relaxed">
+              可改善不符合率 = 可改善件數 ÷ {ra.base} 筆稽核（{REASON_START_DATE} 起）。
+              「待判定」需事後看說明文字再歸組。
+            </p>
+
+            <div className="pt-3 border-t border-stone-100 space-y-1.5">
+              {REASONS.map(r => {
+                const n = ra.byReason[r.code];
+                const pct = ra.nonComp ? Math.round((n / ra.nonComp) * 100) : 0;
+                return (
+                  <div key={r.code}>
+                    <div className="flex items-center justify-between text-sm py-0.5">
+                      <span className="text-stone-700 flex items-center gap-1.5">
+                        <span className={`inline-block w-1.5 h-1.5 rounded-full ${r.group === 'actionable' ? 'bg-rose-500' : r.group === 'justified' ? 'bg-emerald-500' : 'bg-stone-400'}`}></span>
+                        {r.label}
+                      </span>
+                      <span className="tabular-nums text-stone-600 text-xs">{n} 件 · {pct}%</span>
+                    </div>
+                    <div className="h-1 bg-stone-100 rounded-full overflow-hidden">
+                      <div className={`h-full ${r.group === 'actionable' ? 'bg-rose-400' : r.group === 'justified' ? 'bg-emerald-400' : 'bg-stone-400'}`}
+                        style={{ width: `${pct}%` }}></div>
+                    </div>
+                  </div>
+                );
+              })}
+              {ra.uncoded > 0 && (
+                <div className="flex items-center justify-between text-sm py-0.5 text-stone-400">
+                  <span>未分類</span>
+                  <span className="tabular-nums text-xs">{ra.uncoded} 件</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="bg-white rounded-xl border border-stone-200 p-4">
         <div className="text-sm font-semibold text-stone-700 mb-3">每週符合率趨勢（{label}）</div>
         {loading ? <div className="text-center text-stone-400 py-10 text-sm">載入中…</div>
@@ -813,6 +999,17 @@ function StatsView({ loading, records }) {
             </div>
           )}
       </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, sub, tone }) {
+  const toneCls = tone === 'rose' ? 'text-rose-700' : tone === 'emerald' ? 'text-emerald-700' : 'text-stone-600';
+  return (
+    <div className="bg-stone-50 rounded-lg p-2.5 text-center">
+      <div className="text-[10px] text-stone-500 font-semibold">{label}</div>
+      <div className={`text-xl font-bold tabular-nums serif mt-0.5 ${toneCls}`}>{value}</div>
+      <div className="text-[10px] text-stone-400 tabular-nums">{sub}</div>
     </div>
   );
 }
@@ -919,6 +1116,7 @@ function ListView({ loading, records, session, profile, onDelete, onRefresh }) {
         : filtered.length === 0 ? <div className="text-center text-stone-400 py-10 text-sm">尚無記錄</div>
           : filtered.map(r => {
             const d = new Date(r.created_at);
+            const rs = r.noncompliance_reason ? REASON_MAP[r.noncompliance_reason] : null;
             return (
               <div key={r.id} className="bg-white rounded-lg border border-stone-200 p-3">
                 <div className="flex items-start justify-between">
@@ -928,6 +1126,11 @@ function ListView({ loading, records, session, profile, onDelete, onRefresh }) {
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${r.compliant ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
                       {r.compliant ? '符合' : '不符合'}
                     </span>
+                    {rs && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${rs.group === 'actionable' ? 'border-rose-200 text-rose-700' : rs.group === 'justified' ? 'border-emerald-200 text-emerald-700' : 'border-stone-300 text-stone-500'}`}>
+                        {rs.label}
+                      </span>
+                    )}
                   </div>
                   {profile.is_admin && <button onClick={() => onDelete(r.id)} className="text-stone-300 text-xs hover:text-rose-600">刪除</button>}
                 </div>
@@ -935,6 +1138,11 @@ function ListView({ loading, records, session, profile, onDelete, onRefresh }) {
                   {r.original_value} → {r.adjusted_value} {r.mode === 'flow' ? 'L/min' : '%'}
                   {r.spo2 != null && <span className="text-stone-400 ml-2">SpO₂ {r.spo2}%{r.copd ? ' · COPD' : ''}</span>}
                 </div>
+                {r.reason_note && (
+                  <div className="mt-1 text-xs text-stone-600 bg-rose-50 rounded px-2 py-1.5 leading-relaxed">
+                    {r.reason_note}
+                  </div>
+                )}
                 {r.note && (
                   <div className="mt-1 text-xs text-stone-500 bg-stone-50 rounded px-2 py-1.5 leading-relaxed">
                     {r.note}
@@ -979,6 +1187,10 @@ function SettingsView({ session, profile, records, cfg, sb, apiCall, onSignOut, 
       )}
 
       <ExportCard records={records} />
+
+      <div className="text-center text-[11px] text-stone-400 pt-2">
+        version 2.0 · 2026-07-29 · developer 林鎮均
+      </div>
 
       <button onClick={onSignOut}
         className="w-full py-3 rounded-xl border border-rose-200 bg-white text-rose-700 font-semibold active:bg-rose-50">
