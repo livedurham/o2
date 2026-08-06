@@ -877,18 +877,6 @@ function StatsView({ loading, records }) {
     return { ward: w, total: wr.length, ok, rate: wr.length ? Math.round((ok / wr.length) * 100) : 0 };
   }), [periodRecords]);
 
-  // 用氧中／未用氧 分開統計：未用氧幾乎必為符合，混在一起會稀釋真實的用氧品質
-  const airSplit = useMemo(() => {
-    const onO2 = periodRecords.filter(r => !isRoomAir(r));
-    const room = periodRecords.filter(r => isRoomAir(r));
-    const okO2 = onO2.filter(r => r.compliant).length;
-    const okRoom = room.filter(r => r.compliant).length;
-    return {
-      onO2: { total: onO2.length, ok: okO2, rate: onO2.length ? Math.round((okO2 / onO2.length) * 100) : 0 },
-      room: { total: room.length, ok: okRoom, rate: room.length ? Math.round((okRoom / room.length) * 100) : 0 },
-    };
-  }, [periodRecords]);
-
   const weeklyStats = useMemo(() => {
     const map = {};
     periodRecords.forEach(r => {
@@ -900,6 +888,20 @@ function StatsView({ loading, records }) {
     return Object.values(map).sort((a, b) => a.week.localeCompare(b.week))
       .map(w => ({ ...w, rate: w.total ? Math.round((w.ok / w.total) * 100) : 0 }));
   }, [periodRecords]);
+
+  // 趨勢圖固定顯示全部期間，不受上方週／月／季選擇影響，
+  // 以便隨時看到長期走勢（選「本週」時若跟著篩選只會剩一個點）。
+  const allWeeklyStats = useMemo(() => {
+    const map = {};
+    records.forEach(r => {
+      const k = getISOWeek(new Date(r.created_at));
+      if (!map[k]) map[k] = { week: k, total: 0, ok: 0 };
+      map[k].total++;
+      if (r.compliant) map[k].ok++;
+    });
+    return Object.values(map).sort((a, b) => a.week.localeCompare(b.week))
+      .map(w => ({ ...w, rate: w.total ? Math.round((w.ok / w.total) * 100) : 0 }));
+  }, [records]);
 
   // ===== 原因分析（只計 REASON_START_DATE 之後的紀錄）=====
   const reasonAnalysis = useMemo(() => {
@@ -943,20 +945,6 @@ function StatsView({ loading, records }) {
       </div>
 
       <div className="bg-white rounded-xl border border-stone-200 p-4">
-        <div className="text-sm font-semibold text-stone-700 mb-3">用氧中 vs 未用氧（{label}）</div>
-        <div className="grid grid-cols-2 gap-2">
-          <MiniStat label="用氧中符合率" value={airSplit.onO2.total ? `${airSplit.onO2.rate}%` : '—'}
-            sub={`${airSplit.onO2.ok}/${airSplit.onO2.total} 筆`} tone="teal" />
-          <MiniStat label="未用氧符合率" value={airSplit.room.total ? `${airSplit.room.rate}%` : '—'}
-            sub={`${airSplit.room.ok}/${airSplit.room.total} 筆`} tone="stone" />
-        </div>
-        <p className="text-[11px] text-stone-500 leading-relaxed mt-2.5">
-          未用氧者無氧氣可調降，血氧偏高屬生理現象，不判定為不符合。
-          過度用氧的改善成效請看「用氧中符合率」。
-        </p>
-      </div>
-
-      <div className="bg-white rounded-xl border border-stone-200 p-4">
         <div className="text-sm font-semibold text-stone-700 mb-3">{label}各病房符合率</div>
         <div className="space-y-2">
           {wardStats.map(w => (
@@ -992,10 +980,6 @@ function StatsView({ loading, records }) {
               <MiniStat label="臨床合理" value={ra.groupCount.justified} sub="件" tone="emerald" />
               <MiniStat label="待判定" value={ra.groupCount.pending} sub="件" tone="stone" />
             </div>
-            <p className="text-[11px] text-stone-500 leading-relaxed">
-              可改善不符合率 = 可改善件數 ÷ {ra.base} 筆稽核（{REASON_START_DATE} 起）。
-              「待判定」需事後看說明文字再歸組。
-            </p>
 
             <div className="pt-3 border-t border-stone-100 space-y-1.5">
               {REASONS.map(r => {
@@ -1029,14 +1013,14 @@ function StatsView({ loading, records }) {
       </div>
 
       <div className="bg-white rounded-xl border border-stone-200 p-4">
-        <div className="text-sm font-semibold text-stone-700 mb-3">每週符合率趨勢（{label}）</div>
+        <div className="text-sm font-semibold text-stone-700 mb-3">每週符合率趨勢</div>
         {loading ? <div className="text-center text-stone-400 py-10 text-sm">載入中…</div>
-          : weeklyStats.length === 0 ? <div className="text-center text-stone-400 py-10 text-sm">尚無資料</div>
-            : <WeeklyChart data={weeklyStats} />}
+          : allWeeklyStats.length === 0 ? <div className="text-center text-stone-400 py-10 text-sm">尚無資料</div>
+            : <WeeklyChart data={allWeeklyStats} />}
       </div>
 
       <div className="bg-white rounded-xl border border-stone-200 p-4">
-        <div className="text-sm font-semibold text-stone-700 mb-3">每週明細</div>
+        <div className="text-sm font-semibold text-stone-700 mb-3">每週明細（{label}）</div>
         {weeklyStats.length === 0 ? <div className="text-stone-400 text-sm">—</div>
           : (
             <div className="space-y-1.5">
