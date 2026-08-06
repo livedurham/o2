@@ -95,6 +95,15 @@ const REASON_START_DATE = '2026-08-03';
 const reasonGateTime = new Date(REASON_START_DATE + 'T00:00:00').getTime();
 const isAfterGate = (dateLike) => new Date(dateLike).getTime() >= reasonGateTime;
 
+// ===== 室內空氣（未用氧）判定 =====
+// 不另存欄位，統計時直接從原值推導，資料庫維持簡單。
+// 流量模式：0 L/min；FiO₂ 模式：≤ 21%（大氣含氧濃度）
+const isRoomAir = (r) => {
+  const v = Number(r.original_value);
+  if (isNaN(v)) return false;
+  return r.mode === 'flow' ? v === 0 : v <= 21;
+};
+
 // ===== Storage keys =====
 const CFG_KEY = 'oxy-audit-cfg';
 const SES_KEY = 'oxy-audit-ses';
@@ -203,7 +212,7 @@ const getISOWeek = (date) => {
 };
 
 const downloadCSV = (rows, filename) => {
-  const headers = ['時間', '稽核者', '病房', '床號', '模式', '原值', '調整後', 'SpO2', 'COPD', '符合標準', '不符合原因', '原因組別', '原因說明', '註記'];
+  const headers = ['時間', '稽核者', '病房', '床號', '模式', '原值', '調整後', 'SpO2', 'COPD', '未用氧', '符合標準', '不符合原因', '原因組別', '原因說明', '註記'];
   const escape = (v) => {
     if (v === null || v === undefined) return '';
     const s = String(v);
@@ -225,6 +234,7 @@ const downloadCSV = (rows, filename) => {
       r.adjusted_value,
       r.spo2 == null ? '' : r.spo2,
       r.copd ? '是' : '否',
+      isRoomAir(r) ? '是' : '否',
       r.compliant ? '符合' : '不符合',
       rs ? rs.label : '',
       rs ? GROUP_LABELS[rs.group] : '',
@@ -459,7 +469,7 @@ function LoginScreen({ sb, onLogin, onResetConfig }) {
 
       <div className="mt-12 pt-6 border-t border-stone-200 text-center">
         <p className="text-xs text-stone-400">developer 林鎮均</p>
-        <p className="text-xs text-stone-400 mt-0.5">version 2.0 · 2026-07-29</p>
+        <p className="text-xs text-stone-400 mt-0.5">version 2.1 · 2026-08-06</p>
       </div>
     </div>
   );
@@ -616,14 +626,25 @@ function EntryForm({ onSave, session, profile, showToast }) {
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // 室內空氣（未用氧）：流量 0 L/min，或 FiO₂ ≤ 21%
+  const roomAir = useMemo(() => {
+    if (original === '') return false;
+    const v = parseFloat(original);
+    if (isNaN(v)) return false;
+    return mode === 'flow' ? v === 0 : v <= 21;
+  }, [original, mode]);
+
   const auto = useMemo(() => {
     if (spo2 === '') return null;
     const s = parseFloat(spo2);
     if (isNaN(s)) return null;
     const upper = copd ? 92 : 96, lower = copd ? 88 : 92;
-    // SpO2 在目標範圍內 = 符合；超出範圍（過高或過低）= 不符合
+    // 未用氧：沒有氧氣可降，SpO2 偏高是生理現象，不算不符合。
+    // 但若低於下限＝有低血氧卻未給氧，仍判定為不符合。
+    if (roomAir) return s >= lower;
+    // 有用氧：SpO2 在目標範圍內 = 符合；超出範圍（過高或過低）= 不符合
     return s >= lower && s <= upper;
-  }, [spo2, copd]);
+  }, [spo2, copd, roomAir]);
 
   const compliant = manualOk !== null ? manualOk : auto;
   const unit = mode === 'flow' ? 'L/min' : '%';
@@ -734,9 +755,14 @@ function EntryForm({ onSave, session, profile, showToast }) {
             COPD
           </label>
         </div>
+        {roomAir && (
+          <div className="mb-2 text-[11px] text-teal-800 bg-teal-50 border border-teal-200 rounded px-2 py-1.5 leading-snug">
+            室內空氣（未用氧）· SpO₂ ≥ {copd ? 88 : 92}% 即為符合，不因偏高判定不符合
+          </div>
+        )}
         <div className="relative">
           <input type="number" inputMode="decimal" value={spo2} onChange={e => setSpo2(e.target.value)}
-            placeholder={copd ? '目標 88–92' : '目標 92–96'}
+            placeholder={roomAir ? `未用氧，≥ ${copd ? 88 : 92} 即符合` : (copd ? '目標 88–92' : '目標 92–96')}
             className="w-full text-xl font-semibold tabular-nums bg-stone-50 border border-stone-200 rounded-lg px-3 py-2.5 pr-8 outline-none focus:border-teal-600" />
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-stone-400">%</span>
         </div>
@@ -745,6 +771,7 @@ function EntryForm({ onSave, session, profile, showToast }) {
             自動判定：<span className={auto ? 'text-emerald-700 font-semibold' : 'text-rose-700 font-semibold'}>
               {auto ? '符合' : '不符合'}
             </span>
+            {roomAir && !auto && <span className="text-stone-500">（未用氧但血氧偏低，需評估是否給氧）</span>}
           </div>
         )}
       </div>
@@ -850,6 +877,18 @@ function StatsView({ loading, records }) {
     return { ward: w, total: wr.length, ok, rate: wr.length ? Math.round((ok / wr.length) * 100) : 0 };
   }), [periodRecords]);
 
+  // 用氧中／未用氧 分開統計：未用氧幾乎必為符合，混在一起會稀釋真實的用氧品質
+  const airSplit = useMemo(() => {
+    const onO2 = periodRecords.filter(r => !isRoomAir(r));
+    const room = periodRecords.filter(r => isRoomAir(r));
+    const okO2 = onO2.filter(r => r.compliant).length;
+    const okRoom = room.filter(r => r.compliant).length;
+    return {
+      onO2: { total: onO2.length, ok: okO2, rate: onO2.length ? Math.round((okO2 / onO2.length) * 100) : 0 },
+      room: { total: room.length, ok: okRoom, rate: room.length ? Math.round((okRoom / room.length) * 100) : 0 },
+    };
+  }, [periodRecords]);
+
   const weeklyStats = useMemo(() => {
     const map = {};
     periodRecords.forEach(r => {
@@ -901,6 +940,20 @@ function StatsView({ loading, records }) {
         <StatCard label={`${label}符合率`} value={`${overall.rate}%`} sub={`${overall.ok}/${overall.total}`} />
         <StatCard label={`${label}稽核筆數`} value={overall.total} sub="筆" />
         <StatCard label="不符合" value={overall.total - overall.ok} sub={`${label}件數`} />
+      </div>
+
+      <div className="bg-white rounded-xl border border-stone-200 p-4">
+        <div className="text-sm font-semibold text-stone-700 mb-3">用氧中 vs 未用氧（{label}）</div>
+        <div className="grid grid-cols-2 gap-2">
+          <MiniStat label="用氧中符合率" value={airSplit.onO2.total ? `${airSplit.onO2.rate}%` : '—'}
+            sub={`${airSplit.onO2.ok}/${airSplit.onO2.total} 筆`} tone="teal" />
+          <MiniStat label="未用氧符合率" value={airSplit.room.total ? `${airSplit.room.rate}%` : '—'}
+            sub={`${airSplit.room.ok}/${airSplit.room.total} 筆`} tone="stone" />
+        </div>
+        <p className="text-[11px] text-stone-500 leading-relaxed mt-2.5">
+          未用氧者無氧氣可調降，血氧偏高屬生理現象，不判定為不符合。
+          過度用氧的改善成效請看「用氧中符合率」。
+        </p>
       </div>
 
       <div className="bg-white rounded-xl border border-stone-200 p-4">
@@ -1004,7 +1057,7 @@ function StatsView({ loading, records }) {
 }
 
 function MiniStat({ label, value, sub, tone }) {
-  const toneCls = tone === 'rose' ? 'text-rose-700' : tone === 'emerald' ? 'text-emerald-700' : 'text-stone-600';
+  const toneCls = tone === 'rose' ? 'text-rose-700' : tone === 'emerald' ? 'text-emerald-700' : tone === 'teal' ? 'text-teal-700' : 'text-stone-600';
   return (
     <div className="bg-stone-50 rounded-lg p-2.5 text-center">
       <div className="text-[10px] text-stone-500 font-semibold">{label}</div>
@@ -1126,6 +1179,9 @@ function ListView({ loading, records, session, profile, onDelete, onRefresh }) {
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${r.compliant ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
                       {r.compliant ? '符合' : '不符合'}
                     </span>
+                    {isRoomAir(r) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">未用氧</span>
+                    )}
                     {rs && (
                       <span className={`text-[10px] px-1.5 py-0.5 rounded border ${rs.group === 'actionable' ? 'border-rose-200 text-rose-700' : rs.group === 'justified' ? 'border-emerald-200 text-emerald-700' : 'border-stone-300 text-stone-500'}`}>
                         {rs.label}
@@ -1189,7 +1245,7 @@ function SettingsView({ session, profile, records, cfg, sb, apiCall, onSignOut, 
       <ExportCard records={records} />
 
       <div className="text-center text-[11px] text-stone-400 pt-2">
-        version 2.0 · 2026-07-29 · developer 林鎮均
+        version 2.1 · 2026-08-06 · developer 林鎮均
       </div>
 
       <button onClick={onSignOut}
