@@ -95,27 +95,46 @@
   }
   function historyFor(settings, ward) {return settings.filter(p=>p.ward===ward).slice().sort((a,b)=>a.effective_date.localeCompare(b.effective_date));}
   function paramsAt(history,key){let found=null;for(const p of history){if(p.effective_date<=key)found=p;else break;}return found;}
+  function hfncFlow(fio2, actualTotal) {
+    const f=number(fio2);
+    if(f===null || (f!==0 && (f<21 || f>100)))return {error:'HFNC FiO₂ 必須為 21–100%，停止用氧可填 0'};
+    const supplied=actualTotal!=null && !(typeof actualTotal==='string' && !actualTotal.trim());
+    const total=supplied?number(actualTotal):50;
+    if(total===null || total<=0)return {error:'HFNC 實際總氣體流量必須為有限正數'};
+    return {value:f===0?0:total*(f-21)/79,assumed:!supplied,total};
+  }
+  function hfncStages(r) {
+    const text=[r.note,r.reason_note].filter(Boolean).join(' ');
+    const explicit=typeof r.hfnc_before==='boolean' && typeof r.hfnc_after==='boolean';
+    const detected=r.is_hfnc===true || /\bHFNC\b|高流量鼻(?:導管|氧)/i.test(text);
+    if(explicit)return {before:r.hfnc_before,after:r.hfnc_after};
+    if(detected && /(?:->|→|改|換).*(?:venturi|面罩|鼻導管|nasal|N\/C|\bNC\b)/i.test(text))return {error:'HFNC 與一般裝置轉換，請確認調整前／後 HFNC 階段'};
+    return {before:detected,after:detected};
+  }
   function classify(r,p) {
+    const stages=hfncStages(r);
+    if(stages.error)return {kind:'invalid',reason:stages.error};
+    const hfnc=stages.before||stages.after;
+    if(hfnc && r.mode!=='fio2')return {kind:'invalid',reason:'HFNC 需以 FiO₂ 百分比記錄，不能將 L/min 當成 FiO₂'};
     if(roomAir(r))return {kind:'room_air'};
-    if(r.is_hfnc===true)return {kind:'hfnc'};
-    if(r.is_hfnc!==false)return {kind:'unknown_hfnc'};
     if(!p || validateParams(p).length)return {kind:'invalid',reason:'缺少有效病房參數'};
-    const a=flow(r.mode,r.original_value,Number(p.max_flow_lpm));const b=flow(r.mode,r.adjusted_value,Number(p.max_flow_lpm));
+    const a=stages.before?hfncFlow(r.original_value,r.hfnc_total_flow_before):flow(r.mode,r.original_value,Number(p.max_flow_lpm));
+    const b=stages.after?hfncFlow(r.adjusted_value,r.hfnc_total_flow_after):flow(r.mode,r.adjusted_value,Number(p.max_flow_lpm));
     if(a.error||b.error)return {kind:'invalid',reason:[a.error&&'原值：'+a.error,b.error&&'調整後：'+b.error].filter(Boolean).join('；')};
-    return {kind:'valid',before:a.value,after:b.value,net:a.value-b.value};
+    return {kind:'valid',before:a.value,after:b.value,net:a.value-b.value,hfnc,assumedHFNC:!!(a.assumed||b.assumed)};
   }
   function metrics(rows,history) {
-    let over=0,unknownPrevalence=0,before=0,after=0,count=0,downCount=0,down=0,room=0,hfnc=0,unknownHFNC=0;
+    let over=0,unknownPrevalence=0,before=0,after=0,count=0,downCount=0,down=0,room=0,hfnc=0,assumedHFNC=0,unknownHFNC=0;
     const issues=[];
     for(const r of rows){
       const air=roomAir(r),s=number(r.spo2),o=number(r.original_value);
       if(!air){if(o!==null && o>0 && ['flow','fio2'].includes(r.mode) && (r.mode!=='fio2'||(o>=21&&o<=100)) && s!==null && s>=0 && s<=100){if(s>(r.copd?92:96))over++;}else unknownPrevalence++;}
       const c=classify(r,paramsAt(history,dateKey(r.created_at)));
-      if(c.kind==='valid'){count++;before+=c.before;after+=c.after;if(c.net>0){downCount++;down+=c.net;}}
+      if(c.kind==='valid'){if(c.hfnc)hfnc++;if(c.assumedHFNC)assumedHFNC++;if(r.is_hfnc==null&&!c.hfnc)unknownHFNC++;count++;before+=c.before;after+=c.after;if(c.net>0){downCount++;down+=c.net;}}
       else if(c.kind==='room_air')room++;
-      else {if(c.kind==='hfnc')hfnc++;if(c.kind==='unknown_hfnc')unknownHFNC++;issues.push({id:r.id,ward:r.ward,date:dateKey(r.created_at),reason:c.kind==='hfnc'?'HFNC（排除）':c.kind==='unknown_hfnc'?'HFNC 狀態未確認':c.reason});}
+      else {if(c.kind==='hfnc')hfnc++;issues.push({id:r.id,ward:r.ward,date:dateKey(r.created_at),reason:c.kind==='hfnc'?'HFNC 標記或註記（排除）':c.reason});}
     }
-    return {total:rows.length,over,prevalence:rows.length?over/rows.length:null,unknownPrevalence,count,before:count?before/count:null,after:count?after/count:null,net:count?(before-after)/count:null,downCount,down:downCount?down/downCount:null,room,hfnc,unknownHFNC,issues};
+    return {total:rows.length,over,prevalence:rows.length?over/rows.length:null,unknownPrevalence,count,before:count?before/count:null,after:count?after/count:null,net:count?(before-after)/count:null,downCount,down:downCount?down/downCount:null,room,hfnc,assumedHFNC,unknownHFNC,issues};
   }
   function estimate(month, net, history, today, extraStart=null) {
     const begin=month+'-01',end=new Date((day(nextMonth(month)+'-01')-1)*DAY).toISOString().slice(0,10),last=end<today?end:today;
@@ -163,9 +182,9 @@
     const weighted=k=>count?rows.reduce((s,r)=>s+(r[k]??0)*r.count,0)/count:null;
     const complete=k=>rows.length&&rows.every(r=>r[k]!==null)?rows.reduce((s,r)=>s+r[k],0):null;
     const known=k=>rows.some(r=>r[k]!==null)?rows.reduce((s,r)=>s+(r[k]??0),0):null;
-    return {total,count,over,prevalence:total?over/total:null,before:weighted('before'),after:weighted('after'),net:weighted('net'),downCount,down:downCount?rows.reduce((s,r)=>s+(r.down??0)*r.downCount,0)/downCount:null,oxygen:complete('oxygen'),carbon:complete('carbon'),cumulativeOxygen:known('cumulativeOxygen'),cumulativeCarbon:known('cumulativeCarbon'),incomplete:rows.some(r=>r.incomplete||r.cumulativeCarbon===null),unknownHFNC:rows.reduce((s,r)=>s+r.unknownHFNC,0),unknownPrevalence:rows.reduce((s,r)=>s+r.unknownPrevalence,0)};
+    return {total,count,over,prevalence:total?over/total:null,before:weighted('before'),after:weighted('after'),net:weighted('net'),downCount,down:downCount?rows.reduce((s,r)=>s+(r.down??0)*r.downCount,0)/downCount:null,oxygen:complete('oxygen'),carbon:complete('carbon'),cumulativeOxygen:known('cumulativeOxygen'),cumulativeCarbon:known('cumulativeCarbon'),incomplete:rows.some(r=>r.incomplete||r.cumulativeCarbon===null),hfnc:rows.reduce((s,r)=>s+(r.hfnc||0),0),assumedHFNC:rows.reduce((s,r)=>s+(r.assumedHFNC||0),0),unknownHFNC:rows.reduce((s,r)=>s+r.unknownHFNC,0),unknownPrevalence:rows.reduce((s,r)=>s+r.unknownPrevalence,0)};
   }
-  root.OxygenCarbon={DEFAULTS,SOURCE,number,dateKey,validDate,nextMonth,flow,roomAir,validateParams,historyFor,paramsAt,classify,metrics,estimate,build,combine};
+  root.OxygenCarbon={DEFAULTS,SOURCE,number,dateKey,validDate,nextMonth,flow,hfncFlow,hfncStages,roomAir,validateParams,historyFor,paramsAt,classify,metrics,estimate,build,combine};
   if(typeof module!=='undefined'&&module.exports)module.exports=root.OxygenCarbon;
 })(typeof window!=='undefined'?window:globalThis);
 
@@ -341,7 +360,7 @@ const getISOWeek = (date) => {
 };
 
 const downloadCSV = (rows, filename) => {
-  const headers = ['時間', '稽核者', '病房', '床號', '模式', '原值', '調整後', 'SpO2', 'COPD', 'HFNC', '未用氧', '符合標準', '不符合原因', '原因組別', '原因說明', '註記'];
+  const headers = ['時間', '稽核者', '病房', '床號', '模式', '原值', '調整後', 'SpO2', 'COPD', 'HFNC', '前階段HFNC', '後階段HFNC', 'HFNC前總氣體流量', 'HFNC後總氣體流量', '未用氧', '符合標準', '不符合原因', '原因組別', '原因說明', '註記'];
   const escape = (v) => {
     if (v === null || v === undefined) return '';
     const s = String(v);
@@ -364,6 +383,9 @@ const downloadCSV = (rows, filename) => {
       r.spo2 == null ? '' : r.spo2,
       r.copd ? '是' : '否',
       r.is_hfnc == null ? '未確認' : r.is_hfnc ? '是' : '否',
+      r.hfnc_before == null ? '依標記或註記' : r.hfnc_before ? '是' : '否',
+      r.hfnc_after == null ? '依標記或註記' : r.hfnc_after ? '是' : '否',
+      r.hfnc_total_flow_before ?? '', r.hfnc_total_flow_after ?? '',
       isRoomAir(r) ? '是' : '否',
       r.compliant ? '符合' : '不符合',
       rs ? rs.label : '',
@@ -792,7 +814,11 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
   const [adjusted, setAdjusted] = useState(initialRecord ? String(initialRecord.adjusted_value) : '');
   const [spo2, setSpo2] = useState(initialRecord?.spo2 != null ? String(initialRecord.spo2) : '');
   const [copd, setCopd] = useState(initialRecord?.copd ?? false);
-  const [hfnc, setHfnc] = useState(initialRecord ? (initialRecord.is_hfnc === true ? 'yes' : initialRecord.is_hfnc === false ? 'no' : 'unknown') : 'no');
+  const [hfnc, setHfnc] = useState(initialRecord ? (typeof initialRecord.hfnc_before === 'boolean' && typeof initialRecord.hfnc_after === 'boolean' ? (initialRecord.hfnc_before ? (initialRecord.hfnc_after ? 'yes' : 'before') : (initialRecord.hfnc_after ? 'after' : 'no')) : initialRecord.is_hfnc === true ? 'yes' : initialRecord.is_hfnc === false ? 'no' : 'unknown') : 'no');
+  const [hfncTotalBefore,setHfncTotalBefore] = useState(initialRecord?.hfnc_total_flow_before ?? '');
+  const [hfncTotalAfter,setHfncTotalAfter] = useState(initialRecord?.hfnc_total_flow_after ?? '');
+  const hfncBefore = hfnc === 'yes' || hfnc === 'before';
+  const hfncAfter = hfnc === 'yes' || hfnc === 'after';
   const [manualOk, setManualOk] = useState(initialRecord?.compliant ?? null);
   const [reason, setReason] = useState(initialRecord?.noncompliance_reason ?? '');
   const [reasonNote, setReasonNote] = useState(initialRecord?.reason_note ?? '');
@@ -832,7 +858,7 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
 
   const reset = () => {
     setBed(''); setOriginal(''); setAdjusted(''); setSpo2('');
-    setManualOk(null); setCopd(false); setHfnc('no'); setNote('');
+    setManualOk(null); setCopd(false); setHfnc('no'); setHfncTotalBefore(''); setHfncTotalAfter(''); setNote('');
     setReason(''); setReasonNote('');
   };
 
@@ -846,6 +872,12 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
     }
     if (spo2 !== '' && (!Number.isFinite(Number(spo2)) || Number(spo2) < 0 || Number(spo2) > 100)) {
       showToast('SpO₂ 必須介於 0–100'); return;
+    }
+    if (hfncBefore || hfncAfter) {
+      if (mode !== 'fio2') { showToast('HFNC 請選 FiO₂ % 模式，輸入原始百分比'); return; }
+      const checks=[hfncBefore && C.hfncFlow(original,hfncTotalBefore),hfncAfter && C.hfncFlow(adjusted,hfncTotalAfter)].filter(Boolean);
+      const invalid=checks.find(c=>c.error);
+      if(invalid){showToast(invalid.error);return;}
     }
     if (compliant === null) { showToast('請判定是否符合標準'); return; }
     if (compliant === false && reasonActive) {
@@ -864,7 +896,11 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
         adjusted_value: parseFloat(adjusted),
         spo2: spo2 === '' ? null : parseFloat(spo2),
         copd,
-        is_hfnc: hfnc === 'unknown' ? null : hfnc === 'yes',
+        is_hfnc: hfnc === 'unknown' ? null : hfncBefore || hfncAfter,
+        hfnc_before: hfnc === 'unknown' ? null : hfncBefore,
+        hfnc_after: hfnc === 'unknown' ? null : hfncAfter,
+        hfnc_total_flow_before: hfncBefore && hfncTotalBefore !== '' ? Number(hfncTotalBefore) : null,
+        hfnc_total_flow_after: hfncAfter && hfncTotalAfter !== '' ? Number(hfncTotalAfter) : null,
         compliant: compliant === true,
         noncompliance_reason: compliant === false && reason ? reason : null,
         reason_note: compliant === false && reasonNote.trim() ? reasonNote.trim() : null,
@@ -910,10 +946,18 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
 
       <label className="block text-xs text-stone-600">HFNC（高流量鼻導管）
         <select aria-label="HFNC 狀態" value={hfnc} onChange={e=>setHfnc(e.target.value)} className="mt-1 w-full bg-white border border-stone-300 rounded-lg px-3 py-2.5 text-sm">
-          <option value="no">否：一般給氧</option><option value="yes">是：排除流量與減碳分析</option><option value="unknown">未確認：暫不納入分析</option>
+          <option value="no">否：一般給氧</option><option value="yes">調整前後皆為 HFNC</option><option value="before">僅調整前為 HFNC</option><option value="after">僅調整後為 HFNC</option><option value="unknown">未標記：依註記辨識 HFNC</option>
         </select>
-        <span className="block text-stone-500 mt-1">只影響流量與估算減碳分析，不改變原始符合判定。給氧裝置有 HFNC（含調整前或後）請選「是」。</span>
+        <span className="block text-stone-500 mt-1">只影響流量與估算減碳分析，不改變原始符合判定。請依調整前後的實際裝置選擇階段；FiO₂ 保留原始百分比。</span>
       </label>
+      {(hfncBefore || hfncAfter) && <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 text-xs text-teal-900 space-y-2">
+        <p>HFNC 總氣體流量統一假設為 50 L/min，純氧消耗量為估算值。</p>
+        <div className="grid grid-cols-2 gap-2">
+          {hfncBefore && <label>調整前實際總氣體流量（L/min，選填）<input aria-label="HFNC 調整前實際總氣體流量" type="number" step="any" value={hfncTotalBefore} onChange={e=>setHfncTotalBefore(e.target.value)} placeholder="未填則採用 50" className="mt-1 w-full border border-teal-200 rounded-lg px-2 py-2 bg-white" /></label>}
+          {hfncAfter && <label>調整後實際總氣體流量（L/min，選填）<input aria-label="HFNC 調整後實際總氣體流量" type="number" step="any" value={hfncTotalAfter} onChange={e=>setHfncTotalAfter(e.target.value)} placeholder="未填則採用 50" className="mt-1 w-full border border-teal-200 rounded-lg px-2 py-2 bg-white" /></label>}
+        </div>
+        {mode==='fio2' && <p>估算純氧：{carbonFmt((hfncBefore?C.hfncFlow(original,hfncTotalBefore):C.flow(mode,original)).value??null)} → {carbonFmt((hfncAfter?C.hfncFlow(adjusted,hfncTotalAfter):C.flow(mode,adjusted)).value??null)} L/min（實際值優先）</p>}
+      </div>}
       <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-end">
         <div>
           <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">原值</label>
@@ -1251,17 +1295,16 @@ function WeeklyChart({ data }) {
   const linePath = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(d.rate).toFixed(1)}`).join(' ');
   const labelStep = Math.max(1, Math.ceil(data.length / 6));
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" role="img" aria-label="每週符合率趨勢，以各週實際符合筆數除以稽核筆數計算">
       {[0, 25, 50, 75, 100].map(v => (
         <g key={v}>
-          <line x1={pad.l} y1={y(v)} x2={W - pad.r} y2={y(v)} stroke="#e7e5e4" strokeDasharray="3 3" />
+          <line x1={pad.l} y1={y(v)} x2={W - pad.r} y2={y(v)} stroke="#e7e5e4" />
           <text x={pad.l - 4} y={y(v) + 3} fontSize="9" fill="#a8a29e" textAnchor="end">{v}</text>
         </g>
       ))}
-      <line x1={pad.l} y1={y(80)} x2={W - pad.r} y2={y(80)} stroke="#f59e0b" strokeDasharray="4 4" strokeWidth="1.5" />
       <path d={linePath} stroke="#0f766e" strokeWidth="2.5" fill="none" strokeLinejoin="round" />
       {data.map((d, i) => (
-        <circle key={i} cx={x(i)} cy={y(d.rate)} r="3.5" fill="#0f766e" />
+        <circle key={i} cx={x(i)} cy={y(d.rate)} r="3.5" fill="#0f766e"><title>{d.week}：{d.ok}/{d.total} 筆，符合率 {d.rate}%</title></circle>
       ))}
       {data.map((d, i) => (
         i % labelStep === 0 || i === data.length - 1 ? (
@@ -1353,7 +1396,7 @@ function ListView({ loading, records, session, profile, onDelete, onEdit, onRefr
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${r.compliant ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
                       {r.compliant ? '符合' : '不符合'}
                     </span>
-                    {r.is_hfnc == null && <span className="text-[10px] bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded">HFNC 待確認</span>}
+                    {r.is_hfnc == null && <span className="text-[10px] bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded">HFNC 未標記</span>}
                     {r.is_hfnc === true && <span className="text-[10px] bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded">HFNC</span>}
                     {isRoomAir(r) && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">未用氧</span>
@@ -1726,10 +1769,10 @@ function CarbonChart({ title, data, keys, labels, unit, bars=false }) {
 }
 
 function exportCarbonRows(rows, name) {
-  const headers=['年月','病房','稽核總筆數','過度用氧盛行率(%)','盛行率無法判定筆數','有效流量統計筆數','調整前平均流量(L/min)','調整後平均流量(L/min)','平均淨調降量(L/min)','實際調降者平均調降量(L/min)','有效計算天數','估算氧氣節省量(m³)','估算減碳量(kg CO₂e)','累積估算氧氣節省量(m³)','累積估算減碳量(kg CO₂e)','累積資料狀態','HFNC未確認筆數'];
+  const headers=['年月','病房','稽核總筆數','過度用氧盛行率(%)','盛行率無法判定筆數','有效流量統計筆數','調整前平均流量(L/min)','調整後平均流量(L/min)','平均淨調降量(L/min)','實際調降者平均調降量(L/min)','有效計算天數','估算氧氣節省量(m³)','估算減碳量(kg CO₂e)','累積估算氧氣節省量(m³)','累積估算減碳量(kg CO₂e)','累積資料狀態','HFNC未標記依註記納入筆數','HFNC有效估算筆數','HFNC採用50L/min假設筆數'];
   const value=v=>v===null?'資料不足':typeof v==='number'?String(v):String(v??'');
   const escape=v=>'"'+value(v).replace(/"/g,'""')+'"';
-  const lines=rows.map(r=>[r.month,r.ward,r.total,r.prevalence===null?null:r.prevalence*100,r.unknownPrevalence,r.count,r.before,r.after,r.net,r.down,r.days,r.oxygen,r.carbon,r.cumulativeOxygen,r.cumulativeCarbon,r.incomplete?'資料不完整（已知月份小計）':'完整',r.unknownHFNC].map(escape).join(','));
+  const lines=rows.map(r=>[r.month,r.ward,r.total,r.prevalence===null?null:r.prevalence*100,r.unknownPrevalence,r.count,r.before,r.after,r.net,r.down,r.days,r.oxygen,r.carbon,r.cumulativeOxygen,r.cumulativeCarbon,r.incomplete?'資料不完整（已知月份小計）':'完整',r.unknownHFNC,r.hfnc,r.assumedHFNC].map(escape).join(','));
   const blob=new Blob(['\uFEFF'+[headers.map(escape).join(','),...lines].join('\r\n')],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
@@ -1772,7 +1815,9 @@ function CarbonDashboard({records,settings,loading,error,recordsLoading,recordsE
       </div>
       <p className="text-xs text-stone-500">有效流量統計 {display?.count??0} 筆；實際調降者平均 {carbonFmt(display?.down??null)} L/min。負值代表用氧增加。</p>
       {display?.unknownPrevalence>0&&<p className="text-xs text-amber-800">{display.unknownPrevalence} 筆無法判定過度用氧，仍保留於分母；盛行率可能低估。</p>}
-      {issues.length>0&&<details className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900"><summary className="cursor-pointer">分析排除與待確認資料：{issues.length} 筆（全部月份）</summary><p className="mt-2">HFNC 狀態未確認者不納入流量與減碳估算。管理員可至「記錄 → 修改」確認。原本未用氧者另行排除平均流量。</p><div className="mt-2 max-h-64 overflow-auto">{issues.map((r,i)=><p key={`${r.id}-${i}`} className="py-1 border-b border-amber-100">{r.date} · {r.ward} · {String(r.id||'無 ID').slice(0,8)} · {r.reason}</p>)}</div></details>}
+      <p className="text-xs text-stone-500">HFNC 總氣體流量統一假設為 50 L/min，純氧消耗量為估算值；有實際總氣體流量時優先使用實際值。本月 HFNC 有效估算 {display?.hfnc??0} 筆，其中 {display?.assumedHFNC??0} 筆使用 50 L/min 假設。</p>
+      {visible.some(r=>r.unknownHFNC>0)&&<p className="text-xs text-amber-800">舊資料無須逐筆確認 HFNC；未標記且註記未提及 HFNC 者已納入估算。註記可能不完整，估算仍有辨識限制。</p>}
+      {issues.length>0&&<details className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900"><summary className="cursor-pointer">分析排除資料：{issues.length} 筆（全部月份）</summary><p className="mt-2">HFNC 依 FiO₂ 換算純氧流量後納入統計。數值異常、FiO₂ 缺漏或裝置轉換階段不明者排除並提示；原本未用氧者另行排除平均流量。</p><div className="mt-2 max-h-64 overflow-auto">{issues.map((r,i)=><p key={`${r.id}-${i}`} className="py-1 border-b border-amber-100">{r.date} · {r.ward} · {String(r.id||'無 ID').slice(0,8)} · {r.reason}</p>)}</div></details>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <CarbonChart title="每月氧氣流量調整前後比較" data={monthly} keys={['before','after']} labels={['調整前','調整後']} unit="L/min" bars />
         <CarbonChart title="每月平均淨調降量" data={monthly} keys={['net']} labels={['淨調降量']} unit="L/min" />
@@ -1780,10 +1825,11 @@ function CarbonDashboard({records,settings,loading,error,recordsLoading,recordsE
         <CarbonChart title="累積估算減碳量" data={chartData} keys={['cumulativeCarbon']} labels={['累積估算減碳量']} unit="kg CO₂e" />
       </div>
       <details className={carbonPanel+' text-xs text-stone-600'}><summary className="cursor-pointer font-semibold text-teal-800">計算方式、係數來源與估算限制</summary>
-        <p className="mt-3">本減碳量係依氧氣使用稽核結果、病房床數、占床率、用氧比例、調降維持時間及氧氣碳排放係數估算，非實際量測之碳排放減少量。FiO₂ 採本計畫設定之流量換算標準，HFNC 不納入計算。</p>
+        <p className="mt-3">本減碳量係依氧氣使用稽核結果、病房床數、占床率、用氧比例、調降維持時間及氧氣碳排放係數估算，非實際量測之碳排放減少量。FiO₂ 採本計畫設定之流量換算標準，HFNC 依 FiO₂ 換算純氧消耗量後納入計算。</p>
         <p className="mt-2">FiO₂ 30/35/40/50% 分別換算 6/8/10/12 L/min；21% 或停止用氧為 0。僅換算統計，原始資料不變。流量分析上限預設 15 L/min，為可編輯資料檢核參數，非臨床給氧建議。</p>
         <p className="mt-2">盛行率＝原本用氧且調整前 SpO₂ 高於現有目標上限（一般 96%、COPD 92%）筆數 ÷ 全部稽核筆數。HFNC 仍納入盛行率；未用氧者在此分析歸為符合，原始符合判定及既有符合率維持不變。</p>
         <p className="mt-2">每日估算節省 m³＝床數 × 占床率 × 用氧比例 × 當月平均淨調降量 × 60 × 維持小時 ÷ 1000。各日依當時生效參數計算，累加到當日；以 kg CO₂e/L 係數計算時先將 m³ 乘 1000。</p>
+        <p className="mt-2">HFNC 純氧流量＝總氣體流量 ×（FiO₂ − 21）÷ 79，FiO₂ 以百分比輸入。總氣體流量預設 50 L/min，調整前後若有實際紀錄則各自優先採用。HFNC 與一般裝置轉換時按各階段使用對應公式；階段未確認者不猜測。純氧流量可高於一般流量檢核上限，不套用一般給氧的 15 L/min 上限。</p>
         <p className="mt-2">平均淨調降量包含調降、調升與維持不變；實際調降者平均只計正調降。時間使用 Asia/Taipei。缺月不補零、不外推其他月份。累積資料不完整時圖表保留缺口。</p>
         <p className="mt-2">預設係數 0.00017 kg CO₂e/L＝0.17 kg CO₂e/m³。<a href="https://doi.org/10.1016/j.jclepro.2024.141126" target="_blank" rel="noopener noreferrer" className="underline text-teal-700">Tariq M, et al. Journal of Cleaner Production. 2024;444:141126.</a> 此係數依文獻摘要推算，為暫定估算值，北美液態氧供應模型未涵蓋醫院所有耗能與耗材。</p>
         <div className="mt-2">{settings.filter(p=>wards.includes(p.ward)).map(p=><p key={p.id||p.ward+p.effective_date} className="mt-2 border-t pt-2">{p.ward} · {p.effective_date} 生效 · 係數 {p.carbon_kg_per_litre} kg CO₂e/L · {p.source_note}</p>)}</div>
