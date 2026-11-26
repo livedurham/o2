@@ -202,6 +202,8 @@ const EMBEDDED_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3M
 
 // ===== 病房選項（要增加病房，編輯這裡，也要記得改 SQL 的 ward check 限制） =====
 const WARDS = ['5A', 'RCC'];
+// Temporarily hide optional HFNC marking; preserve stored metadata and conversion.
+const HFNC_MARKING_VISIBLE = false;
 
 // =====================================================================
 // ===== 不符合原因分類（v2.0 新增）=====
@@ -873,7 +875,7 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
     if (spo2 !== '' && (!Number.isFinite(Number(spo2)) || Number(spo2) < 0 || Number(spo2) > 100)) {
       showToast('SpO₂ 必須介於 0–100'); return;
     }
-    if (hfncBefore || hfncAfter) {
+    if (HFNC_MARKING_VISIBLE && (hfncBefore || hfncAfter)) {
       if (mode !== 'fio2') { showToast('HFNC 請選 FiO₂ % 模式，輸入原始百分比'); return; }
       const checks=[hfncBefore && C.hfncFlow(original,hfncTotalBefore),hfncAfter && C.hfncFlow(adjusted,hfncTotalAfter)].filter(Boolean);
       const invalid=checks.find(c=>c.error);
@@ -896,11 +898,14 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
         adjusted_value: parseFloat(adjusted),
         spo2: spo2 === '' ? null : parseFloat(spo2),
         copd,
+        // Hidden controls must not overwrite existing metadata or mark new audits as non-HFNC.
+        ...(HFNC_MARKING_VISIBLE ? {
         is_hfnc: hfnc === 'unknown' ? null : hfncBefore || hfncAfter,
         hfnc_before: hfnc === 'unknown' ? null : hfncBefore,
         hfnc_after: hfnc === 'unknown' ? null : hfncAfter,
         hfnc_total_flow_before: hfncBefore && hfncTotalBefore !== '' ? Number(hfncTotalBefore) : null,
         hfnc_total_flow_after: hfncAfter && hfncTotalAfter !== '' ? Number(hfncTotalAfter) : null,
+        } : {}),
         compliant: compliant === true,
         noncompliance_reason: compliant === false && reason ? reason : null,
         reason_note: compliant === false && reasonNote.trim() ? reasonNote.trim() : null,
@@ -944,6 +949,7 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
         </div>
       </div>
 
+      {HFNC_MARKING_VISIBLE && <>
       <label className="block text-xs text-stone-600">HFNC（高流量鼻導管）
         <select aria-label="HFNC 狀態" value={hfnc} onChange={e=>setHfnc(e.target.value)} className="mt-1 w-full bg-white border border-stone-300 rounded-lg px-3 py-2.5 text-sm">
           <option value="no">否：一般給氧</option><option value="yes">調整前後皆為 HFNC</option><option value="before">僅調整前為 HFNC</option><option value="after">僅調整後為 HFNC</option><option value="unknown">未標記：依註記辨識 HFNC</option>
@@ -958,6 +964,7 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
         </div>
         {mode==='fio2' && <p>估算純氧：{carbonFmt((hfncBefore?C.hfncFlow(original,hfncTotalBefore):C.flow(mode,original)).value??null)} → {carbonFmt((hfncAfter?C.hfncFlow(adjusted,hfncTotalAfter):C.flow(mode,adjusted)).value??null)} L/min（實際值優先）</p>}
       </div>}
+      </>}
       <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-end">
         <div>
           <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">原值</label>
@@ -1396,8 +1403,8 @@ function ListView({ loading, records, session, profile, onDelete, onEdit, onRefr
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${r.compliant ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
                       {r.compliant ? '符合' : '不符合'}
                     </span>
-                    {r.is_hfnc == null && <span className="text-[10px] bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded">HFNC 未標記</span>}
-                    {r.is_hfnc === true && <span className="text-[10px] bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded">HFNC</span>}
+                    {HFNC_MARKING_VISIBLE && r.is_hfnc == null && <span className="text-[10px] bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded">HFNC 未標記</span>}
+                    {HFNC_MARKING_VISIBLE && r.is_hfnc === true && <span className="text-[10px] bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded">HFNC</span>}
                     {isRoomAir(r) && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">未用氧</span>
                     )}
