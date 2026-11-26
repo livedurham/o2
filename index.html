@@ -469,7 +469,7 @@ function LoginScreen({ sb, onLogin, onResetConfig }) {
 
       <div className="mt-12 pt-6 border-t border-stone-200 text-center">
         <p className="text-xs text-stone-400">developer 林鎮均</p>
-        <p className="text-xs text-stone-400 mt-0.5">version 2.1 · 2026-08-06</p>
+        <p className="text-xs text-stone-400 mt-0.5">version 2.2 · 2026-11-27</p>
       </div>
     </div>
   );
@@ -495,6 +495,7 @@ function ProfileScreen({ email, onSave, onSignOut }) {
 // =====================================================================
 function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdate }) {
   const [tab, setTab] = useState('entry');
+  const [editing, setEditing] = useState(null);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
@@ -521,6 +522,17 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
     const inserted = await apiCall(t => sb.insert('oxygen_audits', payload, t));
     setRecords(prev => [inserted[0], ...prev]);
     showToast('已儲存 ✓');
+  };
+
+  const updateRecord = async (payload) => {
+    if (!profile.is_admin || !editing) throw new Error('只有管理員可以修改記錄');
+    // 僅更新表單欄位，保留原始稽核者與建立時間。
+    const { auditor_id, auditor_name, ...patch } = payload;
+    const updated = await apiCall(t => sb.update('oxygen_audits', `id=eq.${editing.id}`, patch, t));
+    if (updated.length !== 1) throw new Error('記錄不存在或沒有修改權限，請重新整理並確認已套用管理員編輯 SQL');
+    setRecords(prev => prev.map(r => r.id === editing.id ? updated[0] : r));
+    setEditing(null);
+    showToast('已更新記錄 ✓');
   };
 
   const delRecord = async (id) => {
@@ -588,7 +600,7 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
           { k: 'list', label: '記錄' },
           { k: 'settings', label: '設定' },
         ].map(t => (
-          <button key={t.k} onClick={() => setTab(t.k)}
+          <button key={t.k} onClick={() => { setEditing(null); setTab(t.k); }}
             className={`flex-1 py-3 text-sm font-medium ${tab === t.k ? 'text-teal-700 border-b-2 border-teal-600' : 'text-stone-400'}`}>
             {t.label}
           </button>
@@ -598,7 +610,14 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
       <main className="px-5 py-5 pb-24 max-w-md mx-auto">
         {tab === 'entry' && <EntryForm onSave={addRecord} session={session} profile={profile} showToast={showToast} />}
         {tab === 'stats' && <StatsView loading={loading} records={records} />}
-        {tab === 'list' && <ListView loading={loading} records={records} session={session} profile={profile} onDelete={delRecord} onRefresh={loadRecords} />}
+        {tab === 'list' && editing && profile.is_admin && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold">修改稽核記錄</h2>
+            <p className="text-xs text-stone-500">原稽核者：{editing.auditor_name} · {new Date(editing.created_at).toLocaleString('zh-TW', { hour12: false })}</p>
+            <EntryForm key={editing.id} initialRecord={editing} onSave={updateRecord} onCancel={() => setEditing(null)} session={session} profile={profile} showToast={showToast} />
+          </div>
+        )}
+        {tab === 'list' && !editing && <ListView loading={loading} records={records} session={session} profile={profile} onDelete={delRecord} onEdit={setEditing} onRefresh={loadRecords} />}
         {tab === 'settings' && <SettingsView session={session} profile={profile} records={records} cfg={cfg} sb={sb} apiCall={apiCall} onSignOut={confirmSignOut} onProfileUpdate={onProfileUpdate} />}
       </main>
 
@@ -612,18 +631,18 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
 }
 
 // =====================================================================
-function EntryForm({ onSave, session, profile, showToast }) {
-  const [ward, setWard] = useState(WARDS[0]);
-  const [bed, setBed] = useState('');
-  const [mode, setMode] = useState('flow');
-  const [original, setOriginal] = useState('');
-  const [adjusted, setAdjusted] = useState('');
-  const [spo2, setSpo2] = useState('');
-  const [copd, setCopd] = useState(false);
-  const [manualOk, setManualOk] = useState(null);
-  const [reason, setReason] = useState('');
-  const [reasonNote, setReasonNote] = useState('');
-  const [note, setNote] = useState('');
+function EntryForm({ onSave, session, profile, showToast, initialRecord = null, onCancel }) {
+  const [ward, setWard] = useState(initialRecord?.ward ?? WARDS[0]);
+  const [bed, setBed] = useState(initialRecord?.bed_number ?? '');
+  const [mode, setMode] = useState(initialRecord?.mode ?? 'flow');
+  const [original, setOriginal] = useState(initialRecord ? String(initialRecord.original_value) : '');
+  const [adjusted, setAdjusted] = useState(initialRecord ? String(initialRecord.adjusted_value) : '');
+  const [spo2, setSpo2] = useState(initialRecord?.spo2 != null ? String(initialRecord.spo2) : '');
+  const [copd, setCopd] = useState(initialRecord?.copd ?? false);
+  const [manualOk, setManualOk] = useState(initialRecord?.compliant ?? null);
+  const [reason, setReason] = useState(initialRecord?.noncompliance_reason ?? '');
+  const [reasonNote, setReasonNote] = useState(initialRecord?.reason_note ?? '');
+  const [note, setNote] = useState(initialRecord?.note ?? '');
   const [saving, setSaving] = useState(false);
 
   // 室內空氣（未用氧）：流量 0 L/min，或 FiO₂ ≤ 21%
@@ -650,7 +669,7 @@ function EntryForm({ onSave, session, profile, showToast }) {
   const unit = mode === 'flow' ? 'L/min' : '%';
 
   // 原因分類已啟用？（2026-08-03 起）
-  const reasonActive = isAfterGate(new Date());
+  const reasonActive = isAfterGate(initialRecord?.created_at ?? new Date());
 
   // 一旦不是「不符合」，清掉已選的原因，避免誤存
   useEffect(() => {
@@ -667,6 +686,13 @@ function EntryForm({ onSave, session, profile, showToast }) {
     if (!bed.trim()) { showToast('請輸入床號'); return; }
     if (bed.trim().length > 6) { showToast('床號最多 6 字元'); return; }
     if (original === '' || adjusted === '') { showToast('請輸入原值與調整後'); return; }
+    const values = [Number(original), Number(adjusted)];
+    if (values.some(v => !Number.isFinite(v) || v < 0 || (mode === 'fio2' && v > 100))) {
+      showToast('請輸入有效的給氧數值（FiO₂ 為 0–100）'); return;
+    }
+    if (spo2 !== '' && (!Number.isFinite(Number(spo2)) || Number(spo2) < 0 || Number(spo2) > 100)) {
+      showToast('SpO₂ 必須介於 0–100'); return;
+    }
     if (compliant === null) { showToast('請判定是否符合標準'); return; }
     if (compliant === false && reasonActive) {
       if (!reason) { showToast('請選擇不符合原因'); return; }
@@ -689,7 +715,7 @@ function EntryForm({ onSave, session, profile, showToast }) {
         reason_note: compliant === false && reasonNote.trim() ? reasonNote.trim() : null,
         note: note.trim() || null,
       });
-      reset();
+      if (!initialRecord) reset();
     } catch (e) {
       showToast('儲存失敗：' + e.message);
     } finally { setSaving(false); }
@@ -827,8 +853,9 @@ function EntryForm({ onSave, session, profile, showToast }) {
 
       <button onClick={submit} disabled={saving}
         className="w-full py-4 rounded-xl bg-stone-900 text-white text-base font-semibold active:bg-stone-700 shadow-sm disabled:opacity-50">
-        {saving ? '儲存中…' : '儲存稽核'}
+        {saving ? '儲存中…' : initialRecord ? '儲存修改' : '儲存稽核'}
       </button>
+      {initialRecord && <button onClick={onCancel} disabled={saving} className="w-full py-3 rounded-xl border border-stone-300 bg-white text-stone-600 disabled:opacity-50">取消修改</button>}
     </div>
   );
 }
@@ -1085,7 +1112,7 @@ function WeeklyChart({ data }) {
 }
 
 // =====================================================================
-function ListView({ loading, records, session, profile, onDelete, onRefresh }) {
+function ListView({ loading, records, session, profile, onDelete, onEdit, onRefresh }) {
   const [wardFilter, setWardFilter] = useState('all');
   const [periodFilter, setPeriodFilter] = useState('all');
 
@@ -1172,7 +1199,10 @@ function ListView({ loading, records, session, profile, onDelete, onRefresh }) {
                       </span>
                     )}
                   </div>
-                  {profile.is_admin && <button onClick={() => onDelete(r.id)} className="text-stone-300 text-xs hover:text-rose-600">刪除</button>}
+                  {profile.is_admin && <div className="flex gap-3 flex-none ml-2">
+                    <button onClick={() => onEdit(r)} className="text-teal-700 text-xs">修改</button>
+                    <button onClick={() => onDelete(r.id)} className="text-stone-400 text-xs hover:text-rose-600">刪除</button>
+                  </div>}
                 </div>
                 <div className="mt-1 text-sm tabular-nums text-stone-700">
                   {r.original_value} → {r.adjusted_value} {r.mode === 'flow' ? 'L/min' : '%'}
@@ -1229,7 +1259,7 @@ function SettingsView({ session, profile, records, cfg, sb, apiCall, onSignOut, 
       <ExportCard records={records} />
 
       <div className="text-center text-[11px] text-stone-400 pt-2">
-        version 2.1 · 2026-08-06 · developer 林鎮均
+        version 2.2 · 2026-11-27 · developer 林鎮均
       </div>
 
       <button onClick={onSignOut}
