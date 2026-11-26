@@ -52,6 +52,125 @@
 <body class="bg-stone-50 text-stone-900">
 <div id="root"></div>
 
+<script>
+/* CARBON_ENGINE_BEGIN */
+/* Oxygen audit v3.0 — statistics only; never modifies source audit records. */
+(function(root) {
+  'use strict';
+  const DAY = 86400000;
+  const SOURCE = 'Tariq M, et al. Life cycle assessment of medical oxygen. Journal of Cleaner Production. 2024;444:141126. DOI:10.1016/j.jclepro.2024.141126。依摘要 0.49 kg CO₂e/床日及 2 L/min 推算約 0.00017 kg CO₂e/L；北美液態氧供應之 cradle-to-gate 估算，非本院實測。';
+  const DEFAULTS = { effective_date:'2026-07-01', beds:40, occupancy:1, oxygen_fraction:0.5, hours:24, carbon_kg_per_litre:0.00017, accumulation_start:'2026-07-01', max_flow_lpm:15, source_note:SOURCE };
+  function number(v) {
+    if (typeof v !== 'number' && typeof v !== 'string') return null;
+    if (typeof v === 'string' && !v.trim()) return null;
+    const n = Number(v); return Number.isFinite(n) ? n : null;
+  }
+  function dateKey(v) {
+    if (v == null || (typeof v === 'string' && !v.trim())) return null;
+    const d = v instanceof Date ? v : new Date(v);
+    if (!Number.isFinite(d.getTime())) return null;
+    return new Date(d.getTime()+8*3600000).toISOString().slice(0,10);
+  }
+  function day(key) { return Date.parse(key+'T00:00:00Z')/DAY; }
+  function validDate(key) { return typeof key==='string' && /^\d{4}-\d{2}-\d{2}$/.test(key) && Number.isFinite(day(key)) && new Date(day(key)*DAY).toISOString().slice(0,10)===key; }
+  function nextMonth(key) { const [y,m]=key.split('-').map(Number); return (m===12 ? `${y+1}-01` : `${y}-${String(m+1).padStart(2,'0')}`); }
+  function roomAir(r) { const n=number(r.original_value); return n!==null && ((r.mode==='flow' && n===0) || (r.mode==='fio2' && (n===0 || n===21))); }
+  function flow(mode, value, max=15) {
+    const n=number(value);
+    if(n===null) return {error:'缺值或非數值'};
+    if(n<0) return {error:'負值'};
+    if(mode==='flow') return n<=max ? {value:n} : {error:`流量超出分析上限 ${max} L/min`};
+    if(mode!=='fio2') return {error:'未知給氧模式'};
+    const map={0:0,21:0,30:6,35:8,40:10,50:12};
+    return Object.prototype.hasOwnProperty.call(map,n) ? {value:map[n]} : {error:'未定義的 FiO₂'};
+  }
+  function validateParams(p) {
+    const ranges={beds:[1,10000],occupancy:[0,1],oxygen_fraction:[0,1],hours:[0,24],carbon_kg_per_litre:[0,1],max_flow_lpm:[0.1,1000]};
+    const errors=[];
+    for(const [k,[lo,hi]] of Object.entries(ranges)){const n=number(p[k]);if(n===null||n<lo||n>hi||(k==='beds'&&!Number.isInteger(n)))errors.push(k);}
+    if(!validDate(p.effective_date))errors.push('effective_date');
+    if(!validDate(p.accumulation_start))errors.push('accumulation_start');
+    if(typeof p.source_note!=='string'||!p.source_note.trim())errors.push('source_note');
+    return errors;
+  }
+  function historyFor(settings, ward) {return settings.filter(p=>p.ward===ward).slice().sort((a,b)=>a.effective_date.localeCompare(b.effective_date));}
+  function paramsAt(history,key){let found=null;for(const p of history){if(p.effective_date<=key)found=p;else break;}return found;}
+  function classify(r,p) {
+    if(roomAir(r))return {kind:'room_air'};
+    if(r.is_hfnc===true)return {kind:'hfnc'};
+    if(r.is_hfnc!==false)return {kind:'unknown_hfnc'};
+    if(!p || validateParams(p).length)return {kind:'invalid',reason:'缺少有效病房參數'};
+    const a=flow(r.mode,r.original_value,Number(p.max_flow_lpm));const b=flow(r.mode,r.adjusted_value,Number(p.max_flow_lpm));
+    if(a.error||b.error)return {kind:'invalid',reason:[a.error&&'原值：'+a.error,b.error&&'調整後：'+b.error].filter(Boolean).join('；')};
+    return {kind:'valid',before:a.value,after:b.value,net:a.value-b.value};
+  }
+  function metrics(rows,history) {
+    let over=0,unknownPrevalence=0,before=0,after=0,count=0,downCount=0,down=0,room=0,hfnc=0,unknownHFNC=0;
+    const issues=[];
+    for(const r of rows){
+      const air=roomAir(r),s=number(r.spo2),o=number(r.original_value);
+      if(!air){if(o!==null && o>0 && ['flow','fio2'].includes(r.mode) && (r.mode!=='fio2'||(o>=21&&o<=100)) && s!==null && s>=0 && s<=100){if(s>(r.copd?92:96))over++;}else unknownPrevalence++;}
+      const c=classify(r,paramsAt(history,dateKey(r.created_at)));
+      if(c.kind==='valid'){count++;before+=c.before;after+=c.after;if(c.net>0){downCount++;down+=c.net;}}
+      else if(c.kind==='room_air')room++;
+      else {if(c.kind==='hfnc')hfnc++;if(c.kind==='unknown_hfnc')unknownHFNC++;issues.push({id:r.id,ward:r.ward,date:dateKey(r.created_at),reason:c.kind==='hfnc'?'HFNC（排除）':c.kind==='unknown_hfnc'?'HFNC 狀態未確認':c.reason});}
+    }
+    return {total:rows.length,over,prevalence:rows.length?over/rows.length:null,unknownPrevalence,count,before:count?before/count:null,after:count?after/count:null,net:count?(before-after)/count:null,downCount,down:downCount?down/downCount:null,room,hfnc,unknownHFNC,issues};
+  }
+  function estimate(month, net, history, today, extraStart=null) {
+    const begin=month+'-01',end=new Date((day(nextMonth(month)+'-01')-1)*DAY).toISOString().slice(0,10),last=end<today?end:today;
+    if(begin>last)return {oxygen:0,carbon:0,days:0,missing:false};
+    let oxygen=0,carbon=0,days=0,missing=false;
+    // Day-by-day integration handles effective-date changes, leap years and inclusive boundaries.
+    for(let d=day(begin);d<=day(last);d++){
+      const key=new Date(d*DAY).toISOString().slice(0,10);
+      if(extraStart&&key<extraStart)continue;
+      const p=paramsAt(history,key);
+      if(!p){missing=true;continue;}
+      if(key<p.accumulation_start)continue;
+      if(validateParams(p).length){missing=true;continue;}
+      days++;
+      if(net!==null){const litres=Number(p.beds)*Number(p.occupancy)*Number(p.oxygen_fraction)*net*60*Number(p.hours);oxygen+=litres/1000;carbon+=litres*Number(p.carbon_kg_per_litre);}
+    }
+    return {oxygen:net===null||missing?null:oxygen,carbon:net===null||missing?null:carbon,days,missing};
+  }
+  function build(records,settings,wards,now=new Date()) {
+    const today=dateKey(now);if(!today)throw new Error('Invalid current time');
+    const issues=[];
+    const usable=records.filter(r=>{const key=dateKey(r.created_at);if(!key){issues.push({id:r.id,ward:r.ward,date:'',reason:'無效稽核日期'});return false;}if(new Date(r.created_at).getTime()>new Date(now).getTime())return false;if(!wards.includes(r.ward)){issues.push({id:r.id,ward:r.ward,date:key,reason:'未知病房'});return false;}return true;});
+    const allKeys=[DEFAULTS.accumulation_start,...usable.map(r=>dateKey(r.created_at)),...settings.flatMap(p=>[p.effective_date,p.accumulation_start])].filter(validDate).filter(k=>k<=today).sort();
+    const first=(allKeys[0]||today).slice(0,7),months=[];
+    for(let m=first;m<=today.slice(0,7);m=nextMonth(m)) {if(months.length>2400)throw new Error('日期範圍異常，無法完成分析');months.push(m);}
+    const rows=[];
+    for(const ward of wards){
+      const history=historyFor(settings,ward),current=paramsAt(history,today),start=current?.accumulation_start||DEFAULTS.accumulation_start;
+      let cumulativeOxygen=0,cumulativeCarbon=0,incomplete=false,hasCumulative=false;
+      for(const month of months){
+        const audits=usable.filter(r=>r.ward===ward&&dateKey(r.created_at).slice(0,7)===month),m=metrics(audits,history);
+        const e=estimate(month,m.net,history,today),c=estimate(month,m.net,history,today,start);
+        const last=nextMonth(month)+'-01';
+        const inPeriod=last>start&&month<=today.slice(0,7);
+        const applicable=inPeriod&&(c.days>0||c.missing);
+        if(applicable){if(c.carbon===null||c.oxygen===null)incomplete=true;else{cumulativeOxygen+=c.oxygen;cumulativeCarbon+=c.carbon;hasCumulative=true;}}
+        const result={ward,month,...m,oxygen:e.days===0&&!e.missing?null:e.oxygen,carbon:e.days===0&&!e.missing?null:e.carbon,days:e.days,missingParams:e.missing,start,cumulativeOxygen:hasCumulative?cumulativeOxygen:null,cumulativeCarbon:hasCumulative?cumulativeCarbon:null,incomplete,applicable};
+        rows.push(result);issues.push(...m.issues);
+      }
+    }
+    return {today,months,rows,issues};
+  }
+  function combine(rows) {
+    const total=rows.reduce((s,r)=>s+r.total,0),count=rows.reduce((s,r)=>s+r.count,0),over=rows.reduce((s,r)=>s+r.over,0),downCount=rows.reduce((s,r)=>s+r.downCount,0);
+    const weighted=k=>count?rows.reduce((s,r)=>s+(r[k]??0)*r.count,0)/count:null;
+    const complete=k=>rows.length&&rows.every(r=>r[k]!==null)?rows.reduce((s,r)=>s+r[k],0):null;
+    const known=k=>rows.some(r=>r[k]!==null)?rows.reduce((s,r)=>s+(r[k]??0),0):null;
+    return {total,count,over,prevalence:total?over/total:null,before:weighted('before'),after:weighted('after'),net:weighted('net'),downCount,down:downCount?rows.reduce((s,r)=>s+(r.down??0)*r.downCount,0)/downCount:null,oxygen:complete('oxygen'),carbon:complete('carbon'),cumulativeOxygen:known('cumulativeOxygen'),cumulativeCarbon:known('cumulativeCarbon'),incomplete:rows.some(r=>r.incomplete||r.cumulativeCarbon===null),unknownHFNC:rows.reduce((s,r)=>s+r.unknownHFNC,0),unknownPrevalence:rows.reduce((s,r)=>s+r.unknownPrevalence,0)};
+  }
+  root.OxygenCarbon={DEFAULTS,SOURCE,number,dateKey,validDate,nextMonth,flow,roomAir,validateParams,historyFor,paramsAt,classify,metrics,estimate,build,combine};
+  if(typeof module!=='undefined'&&module.exports)module.exports=root.OxygenCarbon;
+})(typeof window!=='undefined'?window:globalThis);
+
+/* CARBON_ENGINE_END */
+</script>
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useMemo, useCallback } = React;
 
@@ -185,6 +304,16 @@ class SB {
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   }
+  async selectAll(table, query, token) {
+    const rows=[];
+    // Keep paging even when the server caps a page below our requested limit.
+    for (;;) {
+      const page=await this.select(table, `${query}&limit=500&offset=${rows.length}`, token);
+      if (!Array.isArray(page)) throw new Error('資料格式錯誤');
+      if (!page.length) return rows;
+      rows.push(...page);
+    }
+  }
   async remove(table, id, token) {
     const r = await fetch(`${this.url}/rest/v1/${table}?id=eq.${id}`, {
       method: 'DELETE',
@@ -212,7 +341,7 @@ const getISOWeek = (date) => {
 };
 
 const downloadCSV = (rows, filename) => {
-  const headers = ['時間', '稽核者', '病房', '床號', '模式', '原值', '調整後', 'SpO2', 'COPD', '未用氧', '符合標準', '不符合原因', '原因組別', '原因說明', '註記'];
+  const headers = ['時間', '稽核者', '病房', '床號', '模式', '原值', '調整後', 'SpO2', 'COPD', 'HFNC', '未用氧', '符合標準', '不符合原因', '原因組別', '原因說明', '註記'];
   const escape = (v) => {
     if (v === null || v === undefined) return '';
     const s = String(v);
@@ -234,6 +363,7 @@ const downloadCSV = (rows, filename) => {
       r.adjusted_value,
       r.spo2 == null ? '' : r.spo2,
       r.copd ? '是' : '否',
+      r.is_hfnc == null ? '未確認' : r.is_hfnc ? '是' : '否',
       isRoomAir(r) ? '是' : '否',
       r.compliant ? '符合' : '不符合',
       rs ? rs.label : '',
@@ -469,7 +599,7 @@ function LoginScreen({ sb, onLogin, onResetConfig }) {
 
       <div className="mt-12 pt-6 border-t border-stone-200 text-center">
         <p className="text-xs text-stone-400">developer 林鎮均</p>
-        <p className="text-xs text-stone-400 mt-0.5">version 2.2 · 2026-11-27</p>
+        <p className="text-xs text-stone-400 mt-0.5">version 3.0 · 2026-11-27</p>
       </div>
     </div>
   );
@@ -499,6 +629,11 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
+  const [recordsError, setRecordsError] = useState('');
+  const [carbonSettings, setCarbonSettings] = useState([]);
+  const [carbonLoading, setCarbonLoading] = useState(true);
+  const [carbonError, setCarbonError] = useState('');
+
 
   const showToast = (m) => { setToast(m); setTimeout(() => setToast(''), 1800); };
 
@@ -508,15 +643,32 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
 
   const loadRecords = useCallback(async () => {
     setLoading(true);
+    setRecordsError('');
     try {
-      const data = await apiCall(t => sb.select('oxygen_audits', 'select=*&order=created_at.desc&limit=2000', t));
+      const data = await apiCall(t => sb.selectAll('oxygen_audits', 'select=*&order=created_at.desc,id.desc', t));
       setRecords(data);
     } catch (e) {
+      setRecordsError('稽核資料未完整載入，請重新讀取。');
       showToast('讀取失敗：' + e.message);
     } finally { setLoading(false); }
   }, [apiCall, sb]);
 
   useEffect(() => { loadRecords(); }, [loadRecords]);
+
+  const loadCarbonSettings = useCallback(async () => {
+    setCarbonLoading(true);setCarbonError('');
+    try {const data=await apiCall(t=>sb.selectAll('oxygen_carbon_parameters','select=*&order=ward.asc,effective_date.asc,id.asc',t));setCarbonSettings(data);}
+    catch(e){setCarbonError('病房參數未能讀取，請確認已執行 v3.0 資料庫升級。');}
+    finally{setCarbonLoading(false);}
+  },[sb,apiCall]);
+  useEffect(()=>{loadCarbonSettings();},[loadCarbonSettings]);
+  const saveCarbonSettings = async (payload) => {
+    if(!profile.is_admin)throw new Error('只有管理員可以設定參數');
+    const rows=await apiCall(t=>sb.insert('oxygen_carbon_parameters',payload,t));
+    if(rows.length!==1)throw new Error('參數儲存失敗');
+    setCarbonSettings(prev=>[...prev,rows[0]]);
+  };
+  const retryCarbon = () => {loadRecords();loadCarbonSettings();};
 
   const addRecord = async (payload) => {
     const inserted = await apiCall(t => sb.insert('oxygen_audits', payload, t));
@@ -607,9 +759,9 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
         ))}
       </nav>
 
-      <main className="px-5 py-5 pb-24 max-w-md mx-auto">
+      <main className={`px-5 py-5 pb-24 mx-auto ${tab === 'stats' ? 'max-w-3xl' : 'max-w-md'}`}>
         {tab === 'entry' && <EntryForm onSave={addRecord} session={session} profile={profile} showToast={showToast} />}
-        {tab === 'stats' && <StatsView loading={loading} records={records} />}
+        {tab === 'stats' && <StatsView loading={loading} records={records} carbonContent={<CarbonDashboard records={records} settings={carbonSettings} loading={carbonLoading} error={carbonError} recordsLoading={loading} recordsError={recordsError} onRetry={retryCarbon} />} />}
         {tab === 'list' && editing && profile.is_admin && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold">修改稽核記錄</h2>
@@ -618,6 +770,7 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
           </div>
         )}
         {tab === 'list' && !editing && <ListView loading={loading} records={records} session={session} profile={profile} onDelete={delRecord} onEdit={setEditing} onRefresh={loadRecords} />}
+        {tab === 'settings' && profile.is_admin && <div className="mb-5"><CarbonSettings settings={carbonSettings} loading={carbonLoading} error={carbonError} onSave={saveCarbonSettings} onRetry={loadCarbonSettings} /></div>}
         {tab === 'settings' && <SettingsView session={session} profile={profile} records={records} cfg={cfg} sb={sb} apiCall={apiCall} onSignOut={confirmSignOut} onProfileUpdate={onProfileUpdate} />}
       </main>
 
@@ -639,6 +792,7 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
   const [adjusted, setAdjusted] = useState(initialRecord ? String(initialRecord.adjusted_value) : '');
   const [spo2, setSpo2] = useState(initialRecord?.spo2 != null ? String(initialRecord.spo2) : '');
   const [copd, setCopd] = useState(initialRecord?.copd ?? false);
+  const [hfnc, setHfnc] = useState(initialRecord ? (initialRecord.is_hfnc === true ? 'yes' : initialRecord.is_hfnc === false ? 'no' : 'unknown') : 'no');
   const [manualOk, setManualOk] = useState(initialRecord?.compliant ?? null);
   const [reason, setReason] = useState(initialRecord?.noncompliance_reason ?? '');
   const [reasonNote, setReasonNote] = useState(initialRecord?.reason_note ?? '');
@@ -678,7 +832,7 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
 
   const reset = () => {
     setBed(''); setOriginal(''); setAdjusted(''); setSpo2('');
-    setManualOk(null); setCopd(false); setNote('');
+    setManualOk(null); setCopd(false); setHfnc('no'); setNote('');
     setReason(''); setReasonNote('');
   };
 
@@ -710,6 +864,7 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
         adjusted_value: parseFloat(adjusted),
         spo2: spo2 === '' ? null : parseFloat(spo2),
         copd,
+        is_hfnc: hfnc === 'unknown' ? null : hfnc === 'yes',
         compliant: compliant === true,
         noncompliance_reason: compliant === false && reason ? reason : null,
         reason_note: compliant === false && reasonNote.trim() ? reasonNote.trim() : null,
@@ -753,6 +908,12 @@ function EntryForm({ onSave, session, profile, showToast, initialRecord = null, 
         </div>
       </div>
 
+      <label className="block text-xs text-stone-600">HFNC（高流量鼻導管）
+        <select aria-label="HFNC 狀態" value={hfnc} onChange={e=>setHfnc(e.target.value)} className="mt-1 w-full bg-white border border-stone-300 rounded-lg px-3 py-2.5 text-sm">
+          <option value="no">否：一般給氧</option><option value="yes">是：排除流量與減碳分析</option><option value="unknown">未確認：暫不納入分析</option>
+        </select>
+        <span className="block text-stone-500 mt-1">只影響流量與估算減碳分析，不改變原始符合判定。給氧裝置有 HFNC（含調整前或後）請選「是」。</span>
+      </label>
       <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-end">
         <div>
           <label className="text-[11px] uppercase tracking-wider text-stone-500 font-semibold">原值</label>
@@ -882,7 +1043,7 @@ const getPeriodStart = (period) => {
 
 const PERIOD_LABELS = { thisWeek: '本週', thisMonth: '本月', thisQuarter: '本季', thisYear: '本年', all: '全部' };
 
-function StatsView({ loading, records }) {
+function StatsView({ loading, records, carbonContent }) {
   const [period, setPeriod] = useState('thisWeek');
   const label = PERIOD_LABELS[period];
 
@@ -970,6 +1131,8 @@ function StatsView({ loading, records }) {
         <StatCard label={`${label}稽核筆數`} value={overall.total} sub="筆" />
         <StatCard label="不符合" value={overall.total - overall.ok} sub={`${label}件數`} />
       </div>
+
+      {carbonContent}
 
       <div className="bg-white rounded-xl border border-stone-200 p-4">
         <div className="text-sm font-semibold text-stone-700 mb-3">{label}各病房符合率</div>
@@ -1190,6 +1353,8 @@ function ListView({ loading, records, session, profile, onDelete, onEdit, onRefr
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${r.compliant ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
                       {r.compliant ? '符合' : '不符合'}
                     </span>
+                    {r.is_hfnc == null && <span className="text-[10px] bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded">HFNC 待確認</span>}
+                    {r.is_hfnc === true && <span className="text-[10px] bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded">HFNC</span>}
                     {isRoomAir(r) && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">未用氧</span>
                     )}
@@ -1259,7 +1424,7 @@ function SettingsView({ session, profile, records, cfg, sb, apiCall, onSignOut, 
       <ExportCard records={records} />
 
       <div className="text-center text-[11px] text-stone-400 pt-2">
-        version 2.2 · 2026-11-27 · developer 林鎮均
+        version 3.0 · 2026-11-27 · developer 林鎮均
       </div>
 
       <button onClick={onSignOut}
@@ -1527,6 +1692,147 @@ function StatCard({ label, value, sub }) {
     </div>
   );
 }
+
+/* CARBON_UI_BEGIN */
+const C = OxygenCarbon;
+const carbonFmt = (n, digits=2) => n===null || !Number.isFinite(n) ? '資料不足' : n.toLocaleString('zh-TW', {minimumFractionDigits:digits,maximumFractionDigits:digits});
+const carbonPanel = 'bg-white rounded-xl border border-stone-200 p-4';
+const carbonInput = 'w-full bg-white border border-stone-300 rounded-lg px-3 py-2 text-sm';
+
+function CarbonChart({ title, data, keys, labels, unit, bars=false }) {
+  const values=data.flatMap(d=>keys.map(k=>d[k])).filter(v=>v!==null&&Number.isFinite(v));
+  const W=340,H=205,p={l:48,r:16,t:20,b:38},cw=W-p.l-p.r,ch=H-p.t-p.b;
+  const min=Math.min(0,...values),rawMax=Math.max(0,...values),max=rawMax===min?min+1:rawMax;
+  const y=v=>p.t+(max-v)/(max-min)*ch;
+  const x=i=>p.l+cw*(i+.5)/Math.max(1,data.length);
+  const colors=['#0f766e','#a8a29e'];
+  const step=Math.max(1,Math.ceil(data.length/4));
+  return <section className={carbonPanel}>
+    <h3 className="text-sm font-semibold text-stone-700">{title}</h3>
+    <p className="text-xs text-stone-500 mt-1">{unit}</p>
+    {!values.length ? <p className="text-center text-stone-400 py-10 text-sm">資料不足</p> : <>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full mt-2" role="img" aria-label={`${title}，單位 ${unit}；缺資料月份保留缺口`}>
+        {[0,.5,1].map(f=>{const v=min+(max-min)*f;return <g key={f}><line x1={p.l} x2={W-p.r} y1={y(v)} y2={y(v)} stroke="#e7e5e4"/><text x={p.l-6} y={y(v)+4} textAnchor="end" fill="#78716c" fontSize="16">{v.toLocaleString('zh-TW',{notation:'compact',maximumFractionDigits:1})}</text></g>;})}
+        {min<0&&max>0&&<line x1={p.l} x2={W-p.r} y1={y(0)} y2={y(0)} stroke="#a8a29e"/>}
+        {keys.map((k,j)=>bars ? data.map((d,i)=>d[k]===null?null:<rect key={`${k}-${i}`} x={x(i)-Math.min(34,cw/data.length*.65)/2+j*Math.min(34,cw/data.length*.65)/keys.length} y={Math.min(y(0),y(d[k]))} width={Math.min(34,cw/data.length*.65)/keys.length-1} height={Math.abs(y(d[k])-y(0))} fill={colors[j]}><title>{d.month} {labels[j]}：{carbonFmt(d[k])} {unit}</title></rect>) : <g key={k}>
+          <path fill="none" stroke={colors[j]} strokeWidth="2" d={data.map((d,i)=>d[k]===null?'':`${i===0||data[i-1][k]===null?'M':'L'} ${x(i)} ${y(d[k])}`).join(' ')}/>
+          {data.map((d,i)=>d[k]===null?null:<circle key={i} cx={x(i)} cy={y(d[k])} r="3" fill={colors[j]}><title>{d.month} {labels[j]}：{carbonFmt(d[k])} {unit}</title></circle>)}
+        </g>)}
+        {data.map((d,i)=>(i%step===0||i===data.length-1)&&<text key={d.month} x={x(i)} y={H-16} textAnchor="middle" fill="#78716c" fontSize="16">{d.month.slice(2)}</text>)}
+      </svg>
+      {keys.length>1&&<div className="flex justify-center gap-4 text-xs text-stone-600">{labels.map((label,i)=><span key={label}><span className="inline-block w-2 h-2 rounded-sm mr-1" style={{background:colors[i]}}></span>{label}</span>)}</div>}
+    </>}
+  </section>;
+}
+
+function exportCarbonRows(rows, name) {
+  const headers=['年月','病房','稽核總筆數','過度用氧盛行率(%)','盛行率無法判定筆數','有效流量統計筆數','調整前平均流量(L/min)','調整後平均流量(L/min)','平均淨調降量(L/min)','實際調降者平均調降量(L/min)','有效計算天數','估算氧氣節省量(m³)','估算減碳量(kg CO₂e)','累積估算氧氣節省量(m³)','累積估算減碳量(kg CO₂e)','累積資料狀態','HFNC未確認筆數'];
+  const value=v=>v===null?'資料不足':typeof v==='number'?String(v):String(v??'');
+  const escape=v=>'"'+value(v).replace(/"/g,'""')+'"';
+  const lines=rows.map(r=>[r.month,r.ward,r.total,r.prevalence===null?null:r.prevalence*100,r.unknownPrevalence,r.count,r.before,r.after,r.net,r.down,r.days,r.oxygen,r.carbon,r.cumulativeOxygen,r.cumulativeCarbon,r.incomplete?'資料不完整（已知月份小計）':'完整',r.unknownHFNC].map(escape).join(','));
+  const blob=new Blob(['\uFEFF'+[headers.map(escape).join(','),...lines].join('\r\n')],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+function CarbonDashboard({records,settings,loading,error,recordsLoading,recordsError,onRetry}) {
+  const [ward,setWard]=useState('all');
+  const [now,setNow]=useState(()=>new Date());
+  useEffect(()=>{const id=setInterval(()=>setNow(new Date()),60000);const focus=()=>setNow(new Date());window.addEventListener('focus',focus);return()=>{clearInterval(id);window.removeEventListener('focus',focus);};},[]);
+  const result=useMemo(()=>C.build(records,settings,WARDS,now),[records,settings,now]);
+  const wards=ward==='all'?WARDS:[ward];
+  const visible=result.rows.filter(r=>wards.includes(r.ward));
+  const month=result.today.slice(0,7);
+  const [selected,setSelected]=useState(month);
+  const monthly=result.months.map(m=>({month:m,...C.combine(visible.filter(r=>r.month===m))}));
+  const current=monthly.find(r=>r.month===month);
+  const display=monthly.find(r=>r.month===selected)||current;
+  const currentRows=visible.filter(r=>r.month===month);
+  const startDates=[...new Set(currentRows.map(r=>r.start))];
+  const issues=result.issues.filter(r=>wards.includes(r.ward));
+  const pending=loading||recordsLoading;
+  const problem=error||recordsError;
+  const chartData=monthly.map(r=>({...r,cumulativeCarbon:r.incomplete?null:r.cumulativeCarbon}));
+  return <section className="space-y-4 border-t border-stone-200 pt-5" aria-label="氧氣節省與估算減碳">
+    <div className="flex items-center justify-between gap-2"><h2 className="text-base font-bold text-stone-800">氧氣節省與估算減碳</h2><select aria-label="減碳統計病房" value={ward} onChange={e=>setWard(e.target.value)} className="bg-white border border-stone-300 rounded-lg px-2 py-2 text-xs"><option value="all">全部病房</option>{WARDS.map(w=><option key={w}>{w}</option>)}</select></div>
+    {pending?<p className={carbonPanel}>正在讀取完整稽核與參數歷史…</p>:problem?<div className={carbonPanel+' text-sm text-rose-700'} role="alert"><p>估算暫不可用：{problem}</p><button onClick={onRetry} className="mt-2 underline">重新讀取</button></div>:<>
+      <div className="bg-teal-50 border border-teal-200 rounded-xl p-5" aria-live="polite">
+        <h3 className="text-teal-800 text-sm font-semibold">累積估算減碳量</h3>
+        <p className="text-xs text-teal-700 mt-1">Estimated carbon emission reduction</p>
+        <div className="mt-3 text-4xl font-bold tabular-nums text-teal-900 break-words">{carbonFmt(current?.cumulativeCarbon??null)} <span className="text-sm font-normal">kg CO₂e</span></div>
+        <p className="text-xs text-teal-800 mt-2">{startDates.length===1?`${startDates[0]} 起`:'依各病房設定起始日'} 至 {result.today} · {ward==='all'?'全部病房':ward}</p>
+        <p className="text-xs text-teal-800 mt-3 border-t border-teal-200 pt-3">累積估算氧氣節省量：{carbonFmt(current?.cumulativeOxygen??null)} m³</p>
+        {current?.incomplete&&<p className="text-xs text-amber-800 mt-2">資料不完整；有數值時僅為已知月份小計。缺資料月份未補零。</p>}
+      </div>
+      <div className="flex items-center justify-between gap-2"><label className="text-xs text-stone-500" htmlFor="carbon-month">每月統計（不影響累積卡片）</label><select id="carbon-month" value={selected} onChange={e=>setSelected(e.target.value)} className="bg-white border border-stone-300 rounded-lg px-2 py-2 text-xs">{result.months.map(m=><option key={m}>{m}</option>)}</select></div>
+      <div className="grid grid-cols-2 gap-2">
+        <StatCard label="過度用氧盛行率" value={display?.prevalence===null?'資料不足':carbonFmt(display.prevalence*100,1)+'%'} sub={`${display?.over??0} / ${display?.total??0} 筆`} />
+        <StatCard label="平均氧氣流量淨調降量" value={carbonFmt(display?.net??null)} sub="L/min" />
+        <StatCard label="每月估算氧氣節省量" value={carbonFmt(display?.oxygen??null)} sub="m³" />
+        <StatCard label="每月估算減碳量" value={carbonFmt(display?.carbon??null)} sub="kg CO₂e" />
+      </div>
+      <p className="text-xs text-stone-500">有效流量統計 {display?.count??0} 筆；實際調降者平均 {carbonFmt(display?.down??null)} L/min。負值代表用氧增加。</p>
+      {display?.unknownPrevalence>0&&<p className="text-xs text-amber-800">{display.unknownPrevalence} 筆無法判定過度用氧，仍保留於分母；盛行率可能低估。</p>}
+      {issues.length>0&&<details className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900"><summary className="cursor-pointer">分析排除與待確認資料：{issues.length} 筆（全部月份）</summary><p className="mt-2">HFNC 狀態未確認者不納入流量與減碳估算。管理員可至「記錄 → 修改」確認。原本未用氧者另行排除平均流量。</p><div className="mt-2 max-h-64 overflow-auto">{issues.map((r,i)=><p key={`${r.id}-${i}`} className="py-1 border-b border-amber-100">{r.date} · {r.ward} · {String(r.id||'無 ID').slice(0,8)} · {r.reason}</p>)}</div></details>}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <CarbonChart title="每月氧氣流量調整前後比較" data={monthly} keys={['before','after']} labels={['調整前','調整後']} unit="L/min" bars />
+        <CarbonChart title="每月平均淨調降量" data={monthly} keys={['net']} labels={['淨調降量']} unit="L/min" />
+        <CarbonChart title="每月估算減碳量" data={monthly} keys={['carbon']} labels={['估算減碳量']} unit="kg CO₂e" bars />
+        <CarbonChart title="累積估算減碳量" data={chartData} keys={['cumulativeCarbon']} labels={['累積估算減碳量']} unit="kg CO₂e" />
+      </div>
+      <details className={carbonPanel+' text-xs text-stone-600'}><summary className="cursor-pointer font-semibold text-teal-800">計算方式、係數來源與估算限制</summary>
+        <p className="mt-3">本減碳量係依氧氣使用稽核結果、病房床數、占床率、用氧比例、調降維持時間及氧氣碳排放係數估算，非實際量測之碳排放減少量。FiO₂ 採本計畫設定之流量換算標準，HFNC 不納入計算。</p>
+        <p className="mt-2">FiO₂ 30/35/40/50% 分別換算 6/8/10/12 L/min；21% 或停止用氧為 0。僅換算統計，原始資料不變。流量分析上限預設 15 L/min，為可編輯資料檢核參數，非臨床給氧建議。</p>
+        <p className="mt-2">盛行率＝原本用氧且調整前 SpO₂ 高於現有目標上限（一般 96%、COPD 92%）筆數 ÷ 全部稽核筆數。HFNC 仍納入盛行率；未用氧者在此分析歸為符合，原始符合判定及既有符合率維持不變。</p>
+        <p className="mt-2">每日估算節省 m³＝床數 × 占床率 × 用氧比例 × 當月平均淨調降量 × 60 × 維持小時 ÷ 1000。各日依當時生效參數計算，累加到當日；以 kg CO₂e/L 係數計算時先將 m³ 乘 1000。</p>
+        <p className="mt-2">平均淨調降量包含調降、調升與維持不變；實際調降者平均只計正調降。時間使用 Asia/Taipei。缺月不補零、不外推其他月份。累積資料不完整時圖表保留缺口。</p>
+        <p className="mt-2">預設係數 0.00017 kg CO₂e/L＝0.17 kg CO₂e/m³。<a href="https://doi.org/10.1016/j.jclepro.2024.141126" target="_blank" rel="noopener noreferrer" className="underline text-teal-700">Tariq M, et al. Journal of Cleaner Production. 2024;444:141126.</a> 此係數依文獻摘要推算，為暫定估算值，北美液態氧供應模型未涵蓋醫院所有耗能與耗材。</p>
+        <div className="mt-2">{settings.filter(p=>wards.includes(p.ward)).map(p=><p key={p.id||p.ward+p.effective_date} className="mt-2 border-t pt-2">{p.ward} · {p.effective_date} 生效 · 係數 {p.carbon_kg_per_litre} kg CO₂e/L · {p.source_note}</p>)}</div>
+      </details>
+      <details className={carbonPanel}><summary className="text-sm font-semibold text-stone-700 cursor-pointer">每月統計報表</summary><button className="mt-3 w-full rounded-lg bg-teal-700 text-white py-2 text-sm" onClick={()=>exportCarbonRows(visible,`氧氣節省與估算減碳_${ward}_${result.today}.csv`)}>下載完整每月報表 CSV</button>
+        <p className="text-xs text-stone-500 mt-2">依病房分列，含完整欄位與未四捨五入數值；缺資料標示「資料不足」。</p>
+        <div className="overflow-x-auto mt-3"><table className="text-xs w-full text-right whitespace-nowrap"><thead><tr>{['年月','病房','稽核筆數','過度用氧率','有效筆數','調整前 L/min','調整後 L/min','淨調降 L/min','調降者平均','天數','估算節省 m³','估算減碳 kg CO₂e','累積估算減碳 kg CO₂e'].map(h=><th key={h} className="p-2 font-medium border-b">{h}</th>)}</tr></thead><tbody>{visible.slice().sort((a,b)=>b.month.localeCompare(a.month)||a.ward.localeCompare(b.ward)).map(r=><tr key={r.month+r.ward}>{[r.month,r.ward,r.total,r.prevalence===null?'資料不足':carbonFmt(r.prevalence*100,1)+'%',r.count,carbonFmt(r.before),carbonFmt(r.after),carbonFmt(r.net),carbonFmt(r.down),r.days,carbonFmt(r.oxygen),carbonFmt(r.carbon),carbonFmt(r.cumulativeCarbon)+(r.incomplete?'（小計）':'')].map((v,i)=><td key={i} className="p-2 border-b border-stone-100">{v}</td>)}</tr>)}</tbody></table></div>
+      </details>
+    </>}
+  </section>;
+}
+
+function CarbonSettings({settings,loading,error,onSave,onRetry}) {
+  const [ward,setWard]=useState(WARDS[0]);
+  const [draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
+  const today=C.dateKey(new Date());
+  const history=C.historyFor(settings,ward);
+  const current=C.paramsAt(history,today);
+  const fields=[['beds','病房床數','床'],['occupancy','占床率','%'],['oxygen_fraction','用氧比例','%'],['hours','每日調降維持時間','小時'],['carbon_kg_per_litre','氧氣碳排放係數','kg CO₂e/L'],['max_flow_lpm','流量資料分析上限','L/min']];
+  const openDraft=()=>{setDraft({...C.DEFAULTS,...current,ward,effective_date:today});setMessage('');};
+  const change=(key,value)=>setDraft(p=>({...p,[key]:value}));
+  const save=async()=>{
+    const payload={ward,effective_date:draft.effective_date,accumulation_start:draft.accumulation_start,source_note:draft.source_note.trim()};
+    for(const [key]of fields)payload[key]=C.number(draft[key]);
+    if(C.validateParams(payload).length){setMessage('請檢查參數、日期與來源說明；床數為正整數，占床率／用氧比例為 0–100%，維持時間 0–24 小時。');return;}
+    if(history.some(p=>p.effective_date===payload.effective_date)){setMessage('此病房該生效日已有歷史版本，請選擇其他日期；歷史設定不覆寫。');return;}
+    setBusy(true);setMessage('');
+    try{await onSave(payload);setDraft(null);setMessage('已新增參數歷史版本，統計已重新計算。');}catch(e){setMessage('儲存失敗：'+e.message);}finally{setBusy(false);}
+  };
+  return <section className={carbonPanel+' space-y-3'}>
+    <h2 className="text-sm font-semibold text-stone-700">氧氣節省與估算減碳參數</h2>
+    {loading?<p className="text-sm text-stone-500">載入中…</p>:error?<div className="text-sm text-rose-700"><p>{error}</p><button onClick={onRetry} className="underline mt-2">重新讀取</button></div>:<>
+      <select aria-label="參數病房" className={carbonInput} value={ward} disabled={busy} onChange={e=>{setWard(e.target.value);setDraft(null);setMessage('');}}>{WARDS.map(w=><option key={w}>{w}</option>)}</select>
+      <p className="text-xs text-stone-500">目前生效：{current?.effective_date||'尚未設定'}。新增版本保留舊設定；回溯生效會重新計算受影響月份。</p>
+      {!draft?<button onClick={openDraft} className="w-full bg-teal-700 text-white rounded-lg py-2 text-sm">新增參數版本</button>:<fieldset disabled={busy} className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">{fields.map(([key,label,unit])=><label key={key} className="text-xs text-stone-600">{label}（{unit}）<input type="number" step={key==='beds'?'1':'any'} value={['occupancy','oxygen_fraction'].includes(key)?(draft[key]===''?'':Number(draft[key])*100):draft[key]} onChange={e=>change(key,e.target.value===''?'':['occupancy','oxygen_fraction'].includes(key)?Number(e.target.value)/100:e.target.value)} className={carbonInput+' mt-1'} /></label>)}</div>
+        <label className="block text-xs text-stone-600">生效日期<input type="date" value={draft.effective_date} onChange={e=>change('effective_date',e.target.value)} className={carbonInput+' mt-1'} /></label>
+        <label className="block text-xs text-stone-600">累積計算起始日<input type="date" value={draft.accumulation_start} onChange={e=>change('accumulation_start',e.target.value)} className={carbonInput+' mt-1'} /></label>
+        <label className="block text-xs text-stone-600">係數來源與適用說明<textarea rows={5} value={draft.source_note} onChange={e=>change('source_note',e.target.value)} className={carbonInput+' mt-1'} /></label>
+        <p className="text-xs text-stone-500">係數為暫定估算值。流量上限是資料檢核設定，非臨床治療標準。</p>
+        <div className="grid grid-cols-2 gap-2"><button onClick={save} className="bg-teal-700 text-white rounded-lg py-2 text-sm">{busy?'儲存中…':'儲存新版本'}</button><button onClick={()=>setDraft(null)} className="border border-stone-300 rounded-lg py-2 text-sm">取消</button></div>
+      </fieldset>}
+      <details className="text-xs text-stone-600"><summary className="cursor-pointer">參數歷史（{history.length} 版）</summary>{history.slice().reverse().map(p=><div key={p.id||p.effective_date} className="border-t border-stone-100 mt-2 pt-2"><p className="font-semibold">{p.effective_date} 生效{p.effective_date>today?'（尚未生效）':''}</p><p>{p.beds} 床 · 占床 {carbonFmt(Number(p.occupancy)*100,0)}% · 用氧 {carbonFmt(Number(p.oxygen_fraction)*100,0)}% · {p.hours} 小時</p><p>係數 {p.carbon_kg_per_litre} kg CO₂e/L · 流量上限 {p.max_flow_lpm} L/min</p><p>累積起始 {p.accumulation_start} · 建立 {p.created_at?new Date(p.created_at).toLocaleString('zh-TW'):''}</p><p>{p.source_note}</p></div>)}</details>
+    </>}
+    {message&&<p className="text-xs text-stone-700" role="status">{message}</p>}
+  </section>;
+}
+
+/* CARBON_UI_END */
 
 // =====================================================================
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
