@@ -793,7 +793,7 @@ function MainApp({ sb, session, profile, cfg, apiCall, onSignOut, onProfileUpdat
         )}
         {tab === 'list' && !editing && <ListView loading={loading} records={records} session={session} profile={profile} onDelete={delRecord} onEdit={setEditing} onRefresh={loadRecords} />}
         {tab === 'settings' && profile.is_admin && <div className="mb-5"><CarbonSettings settings={carbonSettings} loading={carbonLoading} error={carbonError} onSave={saveCarbonSettings} onRetry={loadCarbonSettings} /></div>}
-        {tab === 'settings' && <SettingsView session={session} profile={profile} records={records} cfg={cfg} sb={sb} apiCall={apiCall} onSignOut={confirmSignOut} onProfileUpdate={onProfileUpdate} />}
+        {tab === 'settings' && <SettingsView carbonExport={<CarbonMonthlyExport records={records} settings={carbonSettings} loading={carbonLoading} error={carbonError} recordsLoading={loading} recordsError={recordsError} onRetry={retryCarbon} />} session={session} profile={profile} records={records} cfg={cfg} sb={sb} apiCall={apiCall} onSignOut={confirmSignOut} onProfileUpdate={onProfileUpdate} />}
       </main>
 
       {toast && (
@@ -1439,7 +1439,7 @@ function ListView({ loading, records, session, profile, onDelete, onEdit, onRefr
 }
 
 // =====================================================================
-function SettingsView({ session, profile, records, cfg, sb, apiCall, onSignOut, onProfileUpdate }) {
+function SettingsView({ session, profile, records, cfg, sb, apiCall, onSignOut, onProfileUpdate, carbonExport }) {
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-xl border border-stone-200 p-4">
@@ -1464,6 +1464,7 @@ function SettingsView({ session, profile, records, cfg, sb, apiCall, onSignOut, 
         <UserManagementCard session={session} sb={sb} apiCall={apiCall} cfg={cfg} />
       )}
 
+      {carbonExport}
       <ExportCard records={records} />
 
       <div className="text-center text-[11px] text-stone-400 pt-2">
@@ -1738,6 +1739,8 @@ function StatCard({ label, value, sub }) {
 
 /* CARBON_UI_BEGIN */
 const C = OxygenCarbon;
+// Project scope is separate from audit wards: RCC historical data stays intact.
+const CARBON_PROJECT_WARDS = ['5A'];
 const carbonFmt = (n, digits=2) => n===null || !Number.isFinite(n) ? '資料不足' : n.toLocaleString('zh-TW', {minimumFractionDigits:digits,maximumFractionDigits:digits});
 const carbonPanel = 'bg-white rounded-xl border border-stone-200 p-4';
 const carbonInput = 'w-full bg-white border border-stone-300 rounded-lg px-3 py-2 text-sm';
@@ -1778,11 +1781,11 @@ function exportCarbonRows(rows, name) {
 }
 
 function CarbonDashboard({records,settings,loading,error,recordsLoading,recordsError,onRetry}) {
-  const [ward,setWard]=useState('all');
+  const ward = CARBON_PROJECT_WARDS[0];
   const [now,setNow]=useState(()=>new Date());
   useEffect(()=>{const id=setInterval(()=>setNow(new Date()),60000);const focus=()=>setNow(new Date());window.addEventListener('focus',focus);return()=>{clearInterval(id);window.removeEventListener('focus',focus);};},[]);
-  const result=useMemo(()=>C.build(records,settings,WARDS,now),[records,settings,now]);
-  const wards=ward==='all'?WARDS:[ward];
+  const result=useMemo(()=>C.build(records.filter(r=>CARBON_PROJECT_WARDS.includes(r.ward)),settings.filter(p=>CARBON_PROJECT_WARDS.includes(p.ward)),CARBON_PROJECT_WARDS,now),[records,settings,now]);
+  const wards=CARBON_PROJECT_WARDS;
   const visible=result.rows.filter(r=>wards.includes(r.ward));
   const month=result.today.slice(0,7);
   const [selected,setSelected]=useState(month);
@@ -1791,12 +1794,12 @@ function CarbonDashboard({records,settings,loading,error,recordsLoading,recordsE
   const display=monthly.find(r=>r.month===selected)||current;
   const currentRows=visible.filter(r=>r.month===month);
   const startDates=[...new Set(currentRows.map(r=>r.start))];
-  const issues=result.issues.filter(r=>wards.includes(r.ward));
   const pending=loading||recordsLoading;
   const problem=error||recordsError;
   const chartData=monthly.map(r=>({...r,cumulativeCarbon:r.incomplete?null:r.cumulativeCarbon}));
   return <section className="space-y-4 border-t border-stone-200 pt-5" aria-label="氧氣節省與估算減碳">
-    <div className="flex items-center justify-between gap-2"><h2 className="text-base font-bold text-stone-800">氧氣節省與估算減碳</h2><select aria-label="減碳統計病房" value={ward} onChange={e=>setWard(e.target.value)} className="bg-white border border-stone-300 rounded-lg px-2 py-2 text-xs"><option value="all">全部病房</option>{WARDS.map(w=><option key={w}>{w}</option>)}</select></div>
+    <div className="flex items-center justify-between gap-2"><h2 className="text-base font-bold text-stone-800">氧氣節省與估算減碳</h2><span className="bg-teal-50 text-teal-800 border border-teal-200 rounded-lg px-3 py-2 text-xs">5A 專案</span></div>
+    <p className="text-xs text-stone-500">本區僅呈現 5A 專案資料。</p>
     {pending?<p className={carbonPanel}>正在讀取完整稽核與參數歷史…</p>:problem?<div className={carbonPanel+' text-sm text-rose-700'} role="alert"><p>估算暫不可用：{problem}</p><button onClick={onRetry} className="mt-2 underline">重新讀取</button></div>:<>
       <div className="bg-teal-50 border border-teal-200 rounded-xl p-5" aria-live="polite">
         <h3 className="text-teal-800 text-sm font-semibold">累積估算減碳量</h3>
@@ -1817,7 +1820,6 @@ function CarbonDashboard({records,settings,loading,error,recordsLoading,recordsE
       {display?.unknownPrevalence>0&&<p className="text-xs text-amber-800">{display.unknownPrevalence} 筆無法判定過度用氧，仍保留於分母；盛行率可能低估。</p>}
       <p className="text-xs text-stone-500">HFNC 總氣體流量統一假設為 50 L/min，純氧消耗量為估算值；有實際總氣體流量時優先使用實際值。本月 HFNC 有效估算 {display?.hfnc??0} 筆，其中 {display?.assumedHFNC??0} 筆使用 50 L/min 假設。</p>
       {visible.some(r=>r.unknownHFNC>0)&&<p className="text-xs text-amber-800">舊資料無須逐筆確認 HFNC；未標記且註記未提及 HFNC 者已納入估算。註記可能不完整，估算仍有辨識限制。</p>}
-      {issues.length>0&&<details className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900"><summary className="cursor-pointer">分析排除資料：{issues.length} 筆（全部月份）</summary><p className="mt-2">HFNC 依 FiO₂ 換算純氧流量後納入統計。數值異常、FiO₂ 缺漏或裝置轉換階段不明者排除並提示；原本未用氧者另行排除平均流量。</p><div className="mt-2 max-h-64 overflow-auto">{issues.map((r,i)=><p key={`${r.id}-${i}`} className="py-1 border-b border-amber-100">{r.date} · {r.ward} · {String(r.id||'無 ID').slice(0,8)} · {r.reason}</p>)}</div></details>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <CarbonChart title="每月氧氣流量調整前後比較" data={monthly} keys={['before','after']} labels={['調整前','調整後']} unit="L/min" bars />
         <CarbonChart title="每月平均淨調降量" data={monthly} keys={['net']} labels={['淨調降量']} unit="L/min" />
@@ -1834,16 +1836,12 @@ function CarbonDashboard({records,settings,loading,error,recordsLoading,recordsE
         <p className="mt-2">預設係數 0.00017 kg CO₂e/L＝0.17 kg CO₂e/m³。<a href="https://doi.org/10.1016/j.jclepro.2024.141126" target="_blank" rel="noopener noreferrer" className="underline text-teal-700">Tariq M, et al. Journal of Cleaner Production. 2024;444:141126.</a> 此係數依文獻摘要推算，為暫定估算值，北美液態氧供應模型未涵蓋醫院所有耗能與耗材。</p>
         <div className="mt-2">{settings.filter(p=>wards.includes(p.ward)).map(p=><p key={p.id||p.ward+p.effective_date} className="mt-2 border-t pt-2">{p.ward} · {p.effective_date} 生效 · 係數 {p.carbon_kg_per_litre} kg CO₂e/L · {p.source_note}</p>)}</div>
       </details>
-      <details className={carbonPanel}><summary className="text-sm font-semibold text-stone-700 cursor-pointer">每月統計報表</summary><button className="mt-3 w-full rounded-lg bg-teal-700 text-white py-2 text-sm" onClick={()=>exportCarbonRows(visible,`氧氣節省與估算減碳_${ward}_${result.today}.csv`)}>下載完整每月報表 CSV</button>
-        <p className="text-xs text-stone-500 mt-2">依病房分列，含完整欄位與未四捨五入數值；缺資料標示「資料不足」。</p>
-        <div className="overflow-x-auto mt-3"><table className="text-xs w-full text-right whitespace-nowrap"><thead><tr>{['年月','病房','稽核筆數','過度用氧率','有效筆數','調整前 L/min','調整後 L/min','淨調降 L/min','調降者平均','天數','估算節省 m³','估算減碳 kg CO₂e','累積估算減碳 kg CO₂e'].map(h=><th key={h} className="p-2 font-medium border-b">{h}</th>)}</tr></thead><tbody>{visible.slice().sort((a,b)=>b.month.localeCompare(a.month)||a.ward.localeCompare(b.ward)).map(r=><tr key={r.month+r.ward}>{[r.month,r.ward,r.total,r.prevalence===null?'資料不足':carbonFmt(r.prevalence*100,1)+'%',r.count,carbonFmt(r.before),carbonFmt(r.after),carbonFmt(r.net),carbonFmt(r.down),r.days,carbonFmt(r.oxygen),carbonFmt(r.carbon),carbonFmt(r.cumulativeCarbon)+(r.incomplete?'（小計）':'')].map((v,i)=><td key={i} className="p-2 border-b border-stone-100">{v}</td>)}</tr>)}</tbody></table></div>
-      </details>
     </>}
   </section>;
 }
 
 function CarbonSettings({settings,loading,error,onSave,onRetry}) {
-  const [ward,setWard]=useState(WARDS[0]);
+  const ward=CARBON_PROJECT_WARDS[0];
   const [draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
   const today=C.dateKey(new Date());
   const history=C.historyFor(settings,ward);
@@ -1862,7 +1860,7 @@ function CarbonSettings({settings,loading,error,onSave,onRetry}) {
   return <section className={carbonPanel+' space-y-3'}>
     <h2 className="text-sm font-semibold text-stone-700">氧氣節省與估算減碳參數</h2>
     {loading?<p className="text-sm text-stone-500">載入中…</p>:error?<div className="text-sm text-rose-700"><p>{error}</p><button onClick={onRetry} className="underline mt-2">重新讀取</button></div>:<>
-      <select aria-label="參數病房" className={carbonInput} value={ward} disabled={busy} onChange={e=>{setWard(e.target.value);setDraft(null);setMessage('');}}>{WARDS.map(w=><option key={w}>{w}</option>)}</select>
+      <p className="text-sm text-teal-800 font-semibold">5A 專案參數</p>
       <p className="text-xs text-stone-500">目前生效：{current?.effective_date||'尚未設定'}。新增版本保留舊設定；回溯生效會重新計算受影響月份。</p>
       {!draft?<button onClick={openDraft} className="w-full bg-teal-700 text-white rounded-lg py-2 text-sm">新增參數版本</button>:<fieldset disabled={busy} className="space-y-3">
         <div className="grid grid-cols-2 gap-3">{fields.map(([key,label,unit])=><label key={key} className="text-xs text-stone-600">{label}（{unit}）<input type="number" step={key==='beds'?'1':'any'} value={['occupancy','oxygen_fraction'].includes(key)?(draft[key]===''?'':Number(draft[key])*100):draft[key]} onChange={e=>change(key,e.target.value===''?'':['occupancy','oxygen_fraction'].includes(key)?Number(e.target.value)/100:e.target.value)} className={carbonInput+' mt-1'} /></label>)}</div>
@@ -1875,6 +1873,26 @@ function CarbonSettings({settings,loading,error,onSave,onRetry}) {
       <details className="text-xs text-stone-600"><summary className="cursor-pointer">參數歷史（{history.length} 版）</summary>{history.slice().reverse().map(p=><div key={p.id||p.effective_date} className="border-t border-stone-100 mt-2 pt-2"><p className="font-semibold">{p.effective_date} 生效{p.effective_date>today?'（尚未生效）':''}</p><p>{p.beds} 床 · 占床 {carbonFmt(Number(p.occupancy)*100,0)}% · 用氧 {carbonFmt(Number(p.oxygen_fraction)*100,0)}% · {p.hours} 小時</p><p>係數 {p.carbon_kg_per_litre} kg CO₂e/L · 流量上限 {p.max_flow_lpm} L/min</p><p>累積起始 {p.accumulation_start} · 建立 {p.created_at?new Date(p.created_at).toLocaleString('zh-TW'):''}</p><p>{p.source_note}</p></div>)}</details>
     </>}
     {message&&<p className="text-xs text-stone-700" role="status">{message}</p>}
+  </section>;
+}
+
+function CarbonMonthlyExport({records,settings,loading,error,recordsLoading,recordsError,onRetry}) {
+  const [message,setMessage]=useState('');
+  const pending=loading||recordsLoading;
+  const problem=error||recordsError;
+  const download=()=>{
+    setMessage('');
+    try {
+      const result=C.build(records.filter(r=>CARBON_PROJECT_WARDS.includes(r.ward)),settings.filter(p=>CARBON_PROJECT_WARDS.includes(p.ward)),CARBON_PROJECT_WARDS,new Date());
+      exportCarbonRows(result.rows,`氧氣節省與估算減碳_5A_${result.today}.csv`);
+    } catch(e){setMessage('匯出失敗：'+e.message);}
+  };
+  return <section className={carbonPanel+' space-y-3'} aria-label="減碳月報 CSV 匯出">
+    <h2 className="text-sm font-semibold text-stone-700">氧氣節省與估算減碳月報</h2>
+    <p className="text-xs text-stone-500">5A 專案 · 含每月流量、估算氧氣節省量、估算減碳量與累積估算減碳量。CSV 保留完整精度，缺資料另行標示。</p>
+    {problem&&<div className="text-xs text-rose-700" role="alert"><p>{problem}</p><button onClick={onRetry} className="underline mt-1">重新讀取</button></div>}
+    <button onClick={download} disabled={pending||!!problem} className="w-full rounded-xl bg-teal-700 text-white py-3 text-sm font-semibold disabled:opacity-50">{pending?'載入中…':'下載減碳月報 CSV'}</button>
+    {message&&<p className="text-xs text-rose-700" role="alert">{message}</p>}
   </section>;
 }
 
