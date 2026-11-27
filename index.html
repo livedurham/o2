@@ -1096,6 +1096,8 @@ const PERIOD_LABELS = { thisWeek: '本週', thisMonth: '本月', thisQuarter: '�
 
 function StatsView({ loading, records, carbonContent }) {
   const [period, setPeriod] = useState('thisWeek');
+  const [trendPeriod, setTrendPeriod] = useState('week');
+  const trendLabel = {week:'每週',month:'每月',quarter:'每季'}[trendPeriod];
   const label = PERIOD_LABELS[period];
 
   const periodRecords = useMemo(() => {
@@ -1130,17 +1132,22 @@ function StatsView({ loading, records, carbonContent }) {
 
   // 趨勢圖固定顯示全部期間，不受上方週／月／季選擇影響，
   // 以便隨時看到長期走勢（選「本週」時若跟著篩選只會剩一個點）。
-  const allWeeklyStats = useMemo(() => {
+  const trendStats = useMemo(() => {
     const map = {};
     records.forEach(r => {
-      const k = getISOWeek(new Date(r.created_at));
-      if (!map[k]) map[k] = { week: k, total: 0, ok: 0 };
+      const date = new Date(r.created_at);
+      if (!Number.isFinite(date.getTime())) return;
+      const parts = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
+      const year = parts.find(p=>p.type==='year').value;
+      const month = parts.find(p=>p.type==='month').value;
+      const k = trendPeriod==='month' ? `${year}-${month}` : trendPeriod==='quarter' ? `${year}-Q${Math.ceil(Number(month)/3)}` : getISOWeek(new Date(`${year}-${month}-${parts.find(p=>p.type==='day').value}T12:00:00`));
+      if (!map[k]) map[k] = { week:k, total:0, ok:0 };
       map[k].total++;
       if (r.compliant) map[k].ok++;
     });
-    return Object.values(map).sort((a, b) => a.week.localeCompare(b.week))
-      .map(w => ({ ...w, rate: w.total ? Math.round((w.ok / w.total) * 100) : 0 }));
-  }, [records]);
+    return Object.values(map).sort((a,b)=>a.week.localeCompare(b.week))
+      .map(w=>({...w,rate:w.ok/w.total*100}));
+  }, [records, trendPeriod]);
 
   // ===== 原因分析（只計 REASON_START_DATE 之後的紀錄）=====
   const reasonAnalysis = useMemo(() => {
@@ -1183,15 +1190,20 @@ function StatsView({ loading, records, carbonContent }) {
         <StatCard label="不符合" value={overall.total - overall.ok} sub={`${label}件數`} />
       </div>
 
-      {carbonContent}
-
       <div className="bg-white rounded-xl border border-stone-200 p-4">
-        <div className="text-sm font-semibold text-stone-700 mb-3">每週符合率趨勢</div>
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="text-sm font-semibold text-stone-700">{trendLabel}符合率趨勢</div>
+          <select aria-label="符合率趨勢期間" value={trendPeriod} onChange={e=>setTrendPeriod(e.target.value)} className="bg-white border border-stone-300 rounded-lg px-2 py-1 text-xs">
+            <option value="week">每週</option><option value="month">每月</option><option value="quarter">每季</option>
+          </select>
+        </div>
         {loading ? <div className="text-center text-stone-400 py-10 text-sm">載入中…</div>
-          : allWeeklyStats.length === 0 ? <div className="text-center text-stone-400 py-10 text-sm">尚無資料</div>
-            : <WeeklyChart data={allWeeklyStats} />}
+          : trendStats.length === 0 ? <div className="text-center text-stone-400 py-10 text-sm">尚無資料</div>
+            : <WeeklyChart data={trendStats} label={trendLabel} />}
       </div>
 
+
+      {carbonContent}
     </div>
   );
 }
@@ -1207,7 +1219,7 @@ function MiniStat({ label, value, sub, tone }) {
   );
 }
 
-function WeeklyChart({ data }) {
+function WeeklyChart({ data, label = '每週' }) {
   const W = 320, H = 200;
   const pad = { t: 18, r: 15, b: 28, l: 28 };
   const cw = W - pad.l - pad.r;
@@ -1217,7 +1229,7 @@ function WeeklyChart({ data }) {
   const linePath = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(d.rate).toFixed(1)}`).join(' ');
   const labelStep = Math.max(1, Math.ceil(data.length / 6));
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" role="img" aria-label="每週符合率趨勢，以各週實際符合筆數除以稽核筆數計算">
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" role="img" aria-label={`${label}符合率趨勢，以各期間實際符合筆數除以稽核筆數計算`}>
       {[0, 25, 50, 75, 100].map(v => (
         <g key={v}>
           <line x1={pad.l} y1={y(v)} x2={W - pad.r} y2={y(v)} stroke="#e7e5e4" />
@@ -1226,12 +1238,12 @@ function WeeklyChart({ data }) {
       ))}
       <path d={linePath} stroke="#0f766e" strokeWidth="2.5" fill="none" strokeLinejoin="round" />
       {data.map((d, i) => (
-        <circle key={i} cx={x(i)} cy={y(d.rate)} r="3.5" fill="#0f766e"><title>{d.week}：{d.ok}/{d.total} 筆，符合率 {d.rate}%</title></circle>
+        <circle key={i} cx={x(i)} cy={y(d.rate)} r="3.5" fill="#0f766e"><title>{d.week}：{d.ok}/{d.total} 筆，符合率 {Math.round(d.rate*100)/100}%</title></circle>
       ))}
       {data.map((d, i) => (
         i % labelStep === 0 || i === data.length - 1 ? (
           <text key={i} x={x(i)} y={H - 8} fontSize="9" fill="#78716c" textAnchor="middle">
-            W{d.week.split('-W')[1]}
+            {d.week.includes('-W') ? 'W'+d.week.split('-W')[1] : d.week}
           </text>
         ) : null
       ))}
