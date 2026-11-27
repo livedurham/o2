@@ -1186,97 +1186,12 @@ function StatsView({ loading, records, carbonContent }) {
       {carbonContent}
 
       <div className="bg-white rounded-xl border border-stone-200 p-4">
-        <div className="text-sm font-semibold text-stone-700 mb-3">{label}各病房符合率</div>
-        <div className="space-y-2">
-          {wardStats.map(w => (
-            <div key={w.ward} className="flex items-center justify-between text-sm py-1">
-              <span className="font-semibold text-stone-700 w-12">{w.ward}</span>
-              <div className="flex items-center gap-3">
-                <span className="text-stone-500 text-xs tabular-nums">{w.ok}/{w.total}</span>
-                <span className={`font-semibold tabular-nums w-20 text-right ${w.total === 0 ? 'text-stone-300' : w.rate >= 80 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                  {w.total === 0 ? '—' : `${w.rate}% 符合率`}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* ===== 不符合原因分析 ===== */}
-      <div className="bg-white rounded-xl border border-stone-200 p-4">
-        <div className="flex items-baseline justify-between mb-1">
-          <div className="text-sm font-semibold text-stone-700">不符合原因分析</div>
-          <div className="text-[10px] text-stone-400">{REASON_START_DATE} 起</div>
-        </div>
-
-        {ra.base === 0 ? (
-          <div className="text-center text-stone-400 py-8 text-sm leading-relaxed">
-            {REASON_START_DATE} 起才開始記錄原因<br />
-            <span className="text-xs">此期間尚無適用資料</span>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-2">
-              <MiniStat label="可改善" value={`${ra.actionableRate}%`} sub={`${ra.groupCount.actionable} 件`} tone="rose" />
-              <MiniStat label="臨床合理" value={ra.groupCount.justified} sub="件" tone="emerald" />
-              <MiniStat label="待判定" value={ra.groupCount.pending} sub="件" tone="stone" />
-            </div>
-
-            <div className="pt-3 border-t border-stone-100 space-y-1.5">
-              {REASONS.map(r => {
-                const n = ra.byReason[r.code];
-                const pct = ra.nonComp ? Math.round((n / ra.nonComp) * 100) : 0;
-                return (
-                  <div key={r.code}>
-                    <div className="flex items-center justify-between text-sm py-0.5">
-                      <span className="text-stone-700 flex items-center gap-1.5">
-                        <span className={`inline-block w-1.5 h-1.5 rounded-full ${r.group === 'actionable' ? 'bg-rose-500' : r.group === 'justified' ? 'bg-emerald-500' : 'bg-stone-400'}`}></span>
-                        {r.label}
-                      </span>
-                      <span className="tabular-nums text-stone-600 text-xs">{n} 件 · {pct}%</span>
-                    </div>
-                    <div className="h-1 bg-stone-100 rounded-full overflow-hidden">
-                      <div className={`h-full ${r.group === 'actionable' ? 'bg-rose-400' : r.group === 'justified' ? 'bg-emerald-400' : 'bg-stone-400'}`}
-                        style={{ width: `${pct}%` }}></div>
-                    </div>
-                  </div>
-                );
-              })}
-              {ra.uncoded > 0 && (
-                <div className="flex items-center justify-between text-sm py-0.5 text-stone-400">
-                  <span>未分類</span>
-                  <span className="tabular-nums text-xs">{ra.uncoded} 件</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="bg-white rounded-xl border border-stone-200 p-4">
         <div className="text-sm font-semibold text-stone-700 mb-3">每週符合率趨勢</div>
         {loading ? <div className="text-center text-stone-400 py-10 text-sm">載入中…</div>
           : allWeeklyStats.length === 0 ? <div className="text-center text-stone-400 py-10 text-sm">尚無資料</div>
             : <WeeklyChart data={allWeeklyStats} />}
       </div>
 
-      <div className="bg-white rounded-xl border border-stone-200 p-4">
-        <div className="text-sm font-semibold text-stone-700 mb-3">每週明細（{label}）</div>
-        {weeklyStats.length === 0 ? <div className="text-stone-400 text-sm">—</div>
-          : (
-            <div className="space-y-1.5">
-              {[...weeklyStats].reverse().map(w => (
-                <div key={w.week} className="flex items-center justify-between text-sm py-1">
-                  <span className="text-stone-600 tabular-nums">{w.week}</span>
-                  <div className="flex items-center gap-3">
-                    <span className="text-stone-500 text-xs tabular-nums">{w.ok}/{w.total}</span>
-                    <span className={`font-semibold tabular-nums w-20 text-right ${w.rate >= 80 ? 'text-emerald-700' : 'text-rose-700'}`}>{w.rate}% 符合率</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-      </div>
     </div>
   );
 }
@@ -1823,10 +1738,7 @@ function CarbonDashboard({records,settings,loading,error,recordsLoading,recordsE
         <StatCard label="每月估算氧氣節省量" value={carbonFmt(display?.oxygen??null)} sub="m³" />
         <StatCard label="每月估算減碳量" value={carbonFmt(display?.carbon??null)} sub="kg CO₂e" />
       </div>
-      <p className="text-xs text-stone-500">有效流量統計 {display?.count??0} 筆；實際調降者平均 {carbonFmt(display?.down??null)} L/min。負值代表用氧增加。</p>
       {display?.unknownPrevalence>0&&<p className="text-xs text-amber-800">{display.unknownPrevalence} 筆無法判定過度用氧，仍保留於分母；盛行率可能低估。</p>}
-      <p className="text-xs text-stone-500">HFNC 總氣體流量統一假設為 50 L/min，純氧消耗量為估算值；有實際總氣體流量時優先使用實際值。本月 HFNC 有效估算 {display?.hfnc??0} 筆，其中 {display?.assumedHFNC??0} 筆使用 50 L/min 假設。</p>
-      {visible.some(r=>r.unknownHFNC>0)&&<p className="text-xs text-amber-800">舊資料無須逐筆確認 HFNC；未標記且註記未提及 HFNC 者已納入估算。註記可能不完整，估算仍有辨識限制。</p>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <CarbonChart title="每月氧氣流量調整前後比較" data={monthly} keys={['before','after']} labels={['調整前','調整後']} unit="L/min" bars />
         <CarbonChart title="每月平均淨調降量" data={monthly} keys={['net']} labels={['淨調降量']} unit="L/min" />
