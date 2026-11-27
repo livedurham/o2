@@ -1746,14 +1746,7 @@ function CarbonDashboard({records,settings,loading,error,recordsLoading,recordsE
         <CarbonChart title="累積估算減碳量" data={chartData} keys={['cumulativeCarbon']} labels={['累積估算減碳量']} unit="kg CO₂e" />
       </div>
       <details className={carbonPanel+' text-xs text-stone-600'}><summary className="cursor-pointer font-semibold text-teal-800">計算方式、係數來源與估算限制</summary>
-        <p className="mt-3">本減碳量係依氧氣使用稽核結果、病房床數、占床率、用氧比例、調降維持時間及氧氣碳排放係數估算，非實際量測之碳排放減少量。FiO₂ 採本計畫設定之流量換算標準，HFNC 依 FiO₂ 換算純氧消耗量後納入計算。</p>
-        <p className="mt-2">FiO₂ 30/35/40/50% 分別換算 6/8/10/12 L/min；21% 或停止用氧為 0。僅換算統計，原始資料不變。流量分析上限預設 15 L/min，為可編輯資料檢核參數，非臨床給氧建議。</p>
-        <p className="mt-2">盛行率＝原本用氧且調整前 SpO₂ 高於現有目標上限（一般 96%、COPD 92%）筆數 ÷ 全部稽核筆數。HFNC 仍納入盛行率；未用氧者在此分析歸為符合，原始符合判定及既有符合率維持不變。</p>
-        <p className="mt-2">每日估算節省 m³＝床數 × 占床率 × 用氧比例 × 當月平均淨調降量 × 60 × 維持小時 ÷ 1000。各日依當時生效參數計算，累加到當日；以 kg CO₂e/L 係數計算時先將 m³ 乘 1000。</p>
-        <p className="mt-2">HFNC 純氧流量＝總氣體流量 ×（FiO₂ − 21）÷ 79，FiO₂ 以百分比輸入。總氣體流量預設 50 L/min，調整前後若有實際紀錄則各自優先採用。HFNC 與一般裝置轉換時按各階段使用對應公式；階段未確認者不猜測。純氧流量可高於一般流量檢核上限，不套用一般給氧的 15 L/min 上限。</p>
-        <p className="mt-2">平均淨調降量包含調降、調升與維持不變；實際調降者平均只計正調降。時間使用 Asia/Taipei。缺月不補零、不外推其他月份。累積資料不完整時圖表保留缺口。</p>
-        <p className="mt-2">預設係數 0.00017 kg CO₂e/L＝0.17 kg CO₂e/m³。<a href="https://doi.org/10.1016/j.jclepro.2024.141126" target="_blank" rel="noopener noreferrer" className="underline text-teal-700">Tariq M, et al. Journal of Cleaner Production. 2024;444:141126.</a> 此係數依文獻摘要推算，為暫定估算值，北美液態氧供應模型未涵蓋醫院所有耗能與耗材。</p>
-        <div className="mt-2">{settings.filter(p=>wards.includes(p.ward)).map(p=><p key={p.id||p.ward+p.effective_date} className="mt-2 border-t pt-2">{p.ward} · {p.effective_date} 生效 · 係數 {p.carbon_kg_per_litre} kg CO₂e/L · {p.source_note}</p>)}</div>
+        <p className="mt-3">預設係數 0.00017 kg CO₂e/L＝0.17 kg CO₂e/m³，Tariq M, et al. Life cycle assessment of medical oxygen. Journal of Cleaner Production. 2024;444:141126. DOI:<a href="https://doi.org/10.1016/j.jclepro.2024.141126" target="_blank" rel="noopener noreferrer" className="underline text-teal-700">10.1016/j.jclepro.2024.141126</a>。依摘要 0.49 kg CO₂e/床日及 2 L/min 推算約 0.00017 kg CO₂e/L；北美液態氧供應之 cradle-to-gate 估算。</p>
       </details>
     </>}
   </section>;
